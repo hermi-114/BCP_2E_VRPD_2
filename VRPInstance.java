@@ -1,30 +1,26 @@
 import java.util.ArrayList;
 import java.util.List;
 
-
 public class VRPInstance {
-    public Node depot;
+    
     public List<Node> nodes;
-    public double[][] distMatrix;
+    public static double[][] distMatrix;
+    public List<Route> routePool;
 
     public VRPInstance() {
         nodes = new ArrayList<>();
-        distMatrix = new double[Constant.MAX_VEHICLE][Constant.MAX_VEHICLE];
-
+        distMatrix = new double[Constant.TOTAL_CUSTOMER + 1][Constant.TOTAL_CUSTOMER + 1];
+        routePool = new ArrayList<>();
     }
 
-    public void setDepot(Node depot) { this.depot = depot; }
-
     public void addNode(Node node) {
-        if(nodes.contains(node)) return;
-
         nodes.add(node);
     }
 
     public void calculateDistance() {
         for(int i = 0; i < distMatrix.length; i++) {
             for(int j = 0; j < distMatrix.length; j++) {
-                if(i == j) continue;
+                if(i == j) distMatrix[i][j] = 1e8;
 
                 Node src = nodes.get(i);
                 Node dst = nodes.get(j);

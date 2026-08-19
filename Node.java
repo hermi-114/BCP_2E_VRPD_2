@@ -6,6 +6,10 @@ public class Node {
     public double tw_a;
     public double tw_b;
 
+    public Node(int id) { // depot;
+        this.id = id;
+    }
+
     public Node(int id, double x, double y, int demand) {
         this.id = id;
         this.x = x;
