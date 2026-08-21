@@ -3,9 +3,9 @@ import java.util.List;
 
 public class VRPInstance {
     
-    public List<Node> nodes;
+    public static List<Node> nodes;
     public static double[][] distMatrix;
-    public List<Route> routePool;
+    public static List<Route> routePool;
 
     public VRPInstance() {
         nodes = new ArrayList<>();

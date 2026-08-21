@@ -5,6 +5,7 @@ public class Node {
     public boolean canServedByDrone;
     public double tw_a;
     public double tw_b;
+    public double servingTime = 1.5; // h 1.5h (1h30) for truck, 0.75h (45m) for drone
 
     public Node(int id) { // depot;
         this.id = id;
