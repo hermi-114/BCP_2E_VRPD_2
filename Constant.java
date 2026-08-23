@@ -12,14 +12,15 @@ public class Constant {
     public static double DRONE_PAYLOAD = 10.0;                // kg
     public static double DRONE_BATTERY_WEIGHT = 9.25;         // kg
     public static double DRONE_SPINNING_BLADE_AREA = 0.586;   // m^2 per blade
-    public static int DRONE_BLADE_NUMBER = 4;                 // blade
+    public static int DRONE_BLADE_NUMBER = 4;                 // blades
     public static double DRONE_BATTERY_CAPACITY = 2308.8;     // Wh
     public static double DRONE_SPEED = 35;                    // km/h
     public static double DRONE_SETUP_TIME = 0.083;            // h
+    public static int DRONE_MAX_STOP = 10;                    // maximum customers served by each drone from a node
 
     public static double G_FORCE = 9.81;                      // N/kg
     public static double AIR_DENSITY = 1.204;                 // kg/m^3
 
-    public static final double EPSILON = 1e-9; 
+    public static final double EPSILON = 1e-8; 
     
 }
