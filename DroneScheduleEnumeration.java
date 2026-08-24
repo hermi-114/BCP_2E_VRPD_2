@@ -1,7 +1,10 @@
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class DroneScheduleEnumeration {
@@ -9,7 +12,9 @@ public class DroneScheduleEnumeration {
     private final List<List<Integer>> nodeNeighbourhood = new ArrayList<>();
     private final List<List<List<Integer>>> subsetsPool = new ArrayList<>();
 
-    public static List<List<ParetoFront>> paretoMap = new ArrayList<>();
+    public static List<List<Map<Set<Integer>, ParetoFront>>> paretoMap = new ArrayList<>();
+
+    public DroneScheduleEnumeration() {}
     
     private boolean isNeighbour(int src, int dst) {
 
@@ -52,16 +57,21 @@ public class DroneScheduleEnumeration {
             for(int dst = 1; dst <= Constant.TOTAL_CUSTOMER; dst++) {
                 if(isNeighbour(src, dst)) neighbour.add(dst);
             }
-            nodeNeighbourhood.add(neighbour);
+            if(neighbour.size() <= Constant.MAX_NEIGHBOURS_PER_NEIGHBOURHOOD) {
+                final int from = src;
+                Collections.sort(neighbour, Comparator.comparingDouble(i -> dist[from][i]));
+                nodeNeighbourhood.add(neighbour);
+            }
         }
     }
 
     private List<List<Integer>> getSubsets(int d) {
-        if(subsetsPool.get(d) != null) return subsetsPool.get(d);
+        int size = subsetsPool.size();
 
-        int start = subsetsPool.size();
+        if(d < size && subsetsPool.get(d) != null) return subsetsPool.get(d);
+
         
-        for(int size = start; size <= d; size++) {
+        for(; size <= d; size++) {
             List<List<Integer>> subsets = new ArrayList<>();
 
             for (int i = 1; i < (1 << size); i++) {
@@ -113,47 +123,74 @@ public class DroneScheduleEnumeration {
 
         paretoMap.add(Collections.emptyList()); // depot
 
-        for(int node = 1; node <= Constant.TOTAL_CUSTOMER; node++) {
+        int nodeIterTime = Math.min(Constant.TOTAL_CUSTOMER, Config.MAX_NODE_LOOP);
+
+        for(int node = 1; node <= nodeIterTime; node++) {
+            System.out.println("Node " + node);
+
             List<Integer> neighbours = nodeNeighbourhood.get(node);
             List<List<Integer>> subsets = getSubsets(neighbours.size());
-            List<List<Integer>> sequences = new ArrayList<>();
 
-            for(var subset : subsets) {
+            List<Map<Set<Integer>, ParetoFront>> S_d = new ArrayList<>();
+            S_d.add(null); // drone num = 0
+
+            System.out.println(node + " 1");
+
+            Map<Set<Integer>, ParetoFront> S_1 = new HashMap<>();
+            for(List<Integer> subset : subsets) {
                 List<Integer> sequence = new ArrayList<>();
-                for(int customerIdx : subset) sequence.add(neighbours.get(customerIdx));
-                sequences.add(sequence);
-            }
+                for(int i : subset) sequence.add(neighbours.get(i));
 
-            List<ParetoFront> pareto_d = new ArrayList<>();
-            pareto_d.add(null); // pareto for 0 drone
+                Collections.sort(sequence, Comparator.comparingDouble(i -> VRPInstance.nodes.get(i).tw_b));
 
-            ParetoFront p_1 = new ParetoFront();
-            for(List<Integer> sequence : sequences) {
                 List<List<Integer>> newSequences = new ArrayList<>();
                 newSequences.add(sequence);
-                p_1.tryAddSchedule(new DroneSchedule(node, newSequences));
+                
+                ParetoFront pf = new ParetoFront();
+                pf.tryAddSchedule(new DroneSchedule(node, newSequences));
+                
+                S_1.put(new HashSet<>(sequence), pf);
             }
 
-            pareto_d.add(p_1);
+            S_d.add(S_1);
 
             for(int numDrone = 2; numDrone <= Constant.MAX_DRONE_PER_VEHICLE; numDrone++) {
-
-                ParetoFront p_numDrone = new ParetoFront();
+                System.out.println(node + " " + numDrone);
+                Map<Set<Integer>, ParetoFront> S_numDrone = new HashMap<>();
 
                 for(int numDrone_a = 1; numDrone_a <= numDrone/2; numDrone_a++) {
                     int numDrone_b = numDrone - numDrone_a;
 
-                    for(DroneSchedule s_a : pareto_d.get(numDrone_a).nonDominatedSchedules) 
-                        for(DroneSchedule s_b : pareto_d.get(numDrone_b).nonDominatedSchedules) {
-                            DroneSchedule conbined = combine(s_a, s_b);
-                            p_numDrone.tryAddSchedule(conbined);
+                    for(var set_numDrone_a : S_d.get(numDrone_a).entrySet()) {
+                        for(var set_numDrone_b : S_d.get(numDrone_b).entrySet()) {
+
+                            for(DroneSchedule schedule_numDrone_a : set_numDrone_a.getValue().nonDominatedSchedules) {
+                                for(DroneSchedule schedule_numDrone_b : set_numDrone_b.getValue().nonDominatedSchedules) {
+
+                                    DroneSchedule combined = combine(schedule_numDrone_a, schedule_numDrone_b);
+
+                                    if(combined == null) continue;
+                                    
+                                    Set<Integer> combined_customerServed = new HashSet<>();
+                                    combined_customerServed.addAll(schedule_numDrone_a.customerServed);
+                                    combined_customerServed.addAll(schedule_numDrone_b.customerServed);
+
+                                    if(combined_customerServed.size() > Constant.MAX_NEIGHBOURS_PER_NEIGHBOURHOOD) continue;
+
+                                    ParetoFront pf = S_numDrone.getOrDefault(combined_customerServed, new ParetoFront());
+                                    pf.tryAddSchedule(combined);
+                                    S_numDrone.put(combined_customerServed, pf);
+
+                                }
+                            }
                         }
+                    }
                 }
 
-                pareto_d.add(p_numDrone);
+                S_d.add(S_numDrone);
             }
 
-            paretoMap.add(pareto_d);
+            paretoMap.add(S_d);
 
         }
     }

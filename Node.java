@@ -11,11 +11,13 @@ public class Node {
         this.id = id;
     }
 
-    public Node(int id, double x, double y, int demand) {
+    public Node(int id, double x, double y, int demand, double tw_a, double tw_b) {
         this.id = id;
         this.x = x;
         this.y = y;
         this.demand = demand;
+        this.tw_a = tw_a;
+        this.tw_b = tw_b;
         canServedByDrone = true;
     }
 }

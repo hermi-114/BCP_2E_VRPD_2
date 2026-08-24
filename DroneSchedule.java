@@ -56,5 +56,18 @@ public class DroneSchedule {
             && this.makespan <= other.makespan 
             && this.maxStartingTime >= other.maxStartingTime;
     }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("DroneSchedule: [");
+
+        sb.append("numDrones: ").append(sequences.size())
+        .append(", makespan: ").append(String.format("%5.1f", makespan))
+        .append(", maxStartingTime: ").append(String.format("%5.1f", maxStartingTime));
+
+        sb.append("]");
+        return sb.toString();
+    }
     
 }

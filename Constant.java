@@ -1,11 +1,12 @@
 public class Constant {
 
     // ============== FLEET PARAMETERS ===================
-    public static int MAX_VEHICLE;
-    public static int MAX_DRONE;
-    public static int MAX_DRONE_PER_VEHICLE;
+    public static int MAX_VEHICLE = 10;
+    public static int MAX_DRONE = 30;
+    public static int MAX_DRONE_PER_VEHICLE = 3;
 
     public static int TOTAL_CUSTOMER;
+    public static int MAX_NEIGHBOURS_PER_NEIGHBOURHOOD = 15;  // customers
 
     // =============== DRONE PARAMETERS ===================
     public static double DRONE_WEIGHT = 11.0;                 // kg
