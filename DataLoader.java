@@ -21,13 +21,11 @@ public class DataLoader {
     
             String line;
     
-            while((line=br.readLine()) != null) {
+            while((line=br.readLine()) != null && counter <= Config.SIZE_CUSTOMER_DATASET) {
 
                 if (line.trim().isEmpty()) {
                     continue;
                 }
-
-                counter++;
 
                 String[] attrs = line.trim().split("\\s+");
 
@@ -35,13 +33,15 @@ public class DataLoader {
                 double xCoor = Double.parseDouble(attrs[1]);
                 double yCoor = Double.parseDouble(attrs[2]);
                 int demand = (int)Double.parseDouble(attrs[3]);
-                double readyTime = Double.parseDouble(attrs[4]);
-                double deadline = Double.parseDouble(attrs[5]);
+                double readyTime = Double.parseDouble(attrs[4]) / 60;
+                double deadline = Double.parseDouble(attrs[5]) / 60;
                 // double truckServiceTime = Double.parseDouble(attrs[6]);
 
                 Node node = new Node(id-1, xCoor, yCoor, demand, readyTime, deadline);
 
                 VRPInstance.nodes.add(node);
+
+                counter++;
 
             }
             

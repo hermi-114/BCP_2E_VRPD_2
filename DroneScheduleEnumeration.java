@@ -1,3 +1,4 @@
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -12,18 +13,18 @@ public class DroneScheduleEnumeration {
     private final List<List<Integer>> nodeNeighbourhood = new ArrayList<>();
     private final List<List<List<Integer>>> subsetsPool = new ArrayList<>();
 
-    public static List<List<Map<Set<Integer>, ParetoFront>>> paretoMap = new ArrayList<>();
+    public static List<List<Map<BigInteger, ParetoFront>>> paretoMap = new ArrayList<>();
 
     public DroneScheduleEnumeration() {}
-    
+
     private boolean isNeighbour(int src, int dst) {
 
-        if(src == dst) return false;
+        if (src == dst)
+            return false;
 
-        Node dstNode = VRPInstance.nodes.get(dst);
-
-        int demand = dstNode.demand;
-        if(demand > Constant.DRONE_PAYLOAD) return false;
+        int demand = VRPInstance.nodes.get(dst).demand;
+        if (demand > Constant.DRONE_PAYLOAD)
+            return false;
 
         double distance = dist[src][dst];
 
@@ -38,9 +39,9 @@ public class DroneScheduleEnumeration {
 
         double B_c = Constant.DRONE_BATTERY_CAPACITY; // W*h
 
-        double back =  Math.sqrt(g*g*g / (2*p*S*h));
-        double energyGo =   Math.pow(W + m + q, 1.5) * back; // W
-        double energyBack = Math.pow(W + m    , 1.5) * back; // W
+        double back = Math.sqrt(g * g * g / (2 * p * S * h));
+        double energyGo = Math.pow(W + m + q, 1.5) * back; // W
+        double energyBack = Math.pow(W + m, 1.5) * back; // W
 
         double totalTime = distance / Constant.DRONE_SPEED; // h
 
@@ -52,26 +53,30 @@ public class DroneScheduleEnumeration {
     private void buildNodeNeighbourhood() {
         nodeNeighbourhood.add(Collections.emptyList()); // depot has no neighbour
 
-        for(int src = 1; src <= Constant.TOTAL_CUSTOMER; src++) {
-            List<Integer> neighbour = new ArrayList<>();
-            for(int dst = 1; dst <= Constant.TOTAL_CUSTOMER; dst++) {
-                if(isNeighbour(src, dst)) neighbour.add(dst);
+        for (int src = 1; src <= Constant.TOTAL_CUSTOMER; src++) {
+            List<Integer> neighbours = new ArrayList<>();
+            for (int dst = 1; dst <= Constant.TOTAL_CUSTOMER; dst++) {
+                if (isNeighbour(src, dst))
+                    neighbours.add(dst);
             }
-            if(neighbour.size() <= Constant.MAX_NEIGHBOURS_PER_NEIGHBOURHOOD) {
-                final int from = src;
-                Collections.sort(neighbour, Comparator.comparingDouble(i -> dist[from][i]));
-                nodeNeighbourhood.add(neighbour);
-            }
+
+            final int from = src;
+            neighbours = neighbours.stream()
+                    .sorted(Comparator.comparingDouble(i -> dist[from][i]))
+                    .limit(Constant.MAX_NEIGHBOURS_PER_NEIGHBOURHOOD)
+                    .toList();
+
+            nodeNeighbourhood.add(neighbours);
         }
     }
 
     private List<List<Integer>> getSubsets(int d) {
         int size = subsetsPool.size();
 
-        if(d < size && subsetsPool.get(d) != null) return subsetsPool.get(d);
+        if (d < size && subsetsPool.get(d) != null)
+            return subsetsPool.get(d);
 
-        
-        for(; size <= d; size++) {
+        for (; size <= d; size++) {
             List<List<Integer>> subsets = new ArrayList<>();
 
             for (int i = 1; i < (1 << size); i++) {
@@ -97,19 +102,20 @@ public class DroneScheduleEnumeration {
     }
 
     private DroneSchedule combine(DroneSchedule d1, DroneSchedule d2) { // try-catch when call
-        if(d1.src != d2.src) return null;
+        if (d1.src != d2.src)
+            return null;
 
-        Set<Integer> newCustomerServed = new HashSet<>();
-        newCustomerServed.addAll(d1.customerServed);
-        for(var d2_customer : d2.customerServed) {
-            if(newCustomerServed.contains(d2_customer)) return null; // customer was served by both d1 & d2
-            newCustomerServed.add(d2_customer);
-        }
+        if (!d1.customerServed.and(d2.customerServed).equals(BigInteger.ZERO))
+            return null; // schedule_1.cusServed ^ schedule_2.cusServed != 0 -> same customer(s) served by both schedule 
+
+        BigInteger newCustomerServed = d1.customerServed.or(d2.customerServed);
 
         List<List<Integer>> newSequences = new ArrayList<>();
-        
-        for(var d : d1.sequences) newSequences.add(new ArrayList<>(d));
-        for(var d : d2.sequences) newSequences.add(new ArrayList<>(d));
+
+        for (var d : d1.sequences)
+            newSequences.add(new ArrayList<>(d));
+        for (var d : d2.sequences)
+            newSequences.add(new ArrayList<>(d));
 
         double newMakespan = Math.max(d1.makespan, d2.makespan);
         double newMaxStartingTime = Math.min(d1.maxStartingTime, d2.maxStartingTime);
@@ -119,63 +125,89 @@ public class DroneScheduleEnumeration {
     }
 
     public void solve() {
+        paretoMap.clear();
+
         buildNodeNeighbourhood();
 
         paretoMap.add(Collections.emptyList()); // depot
 
         int nodeIterTime = Math.min(Constant.TOTAL_CUSTOMER, Config.MAX_NODE_LOOP);
 
-        for(int node = 1; node <= nodeIterTime; node++) {
+        for (int node = 1; node <= nodeIterTime; node++) {
             System.out.println("Node " + node);
 
             List<Integer> neighbours = nodeNeighbourhood.get(node);
+
+            if (neighbours == null || neighbours.isEmpty())
+                continue;
+
             List<List<Integer>> subsets = getSubsets(neighbours.size());
 
-            List<Map<Set<Integer>, ParetoFront>> S_d = new ArrayList<>();
-            S_d.add(null); // drone num = 0
+            List<Map<BigInteger, ParetoFront>> S_d = new ArrayList<>();
+            S_d.add(Collections.emptyMap()); // drone num = 0
 
             System.out.println(node + " 1");
 
-            Map<Set<Integer>, ParetoFront> S_1 = new HashMap<>();
-            for(List<Integer> subset : subsets) {
+            Map<BigInteger, ParetoFront> S_1 = new HashMap<>();
+            for (List<Integer> subset : subsets) {
                 List<Integer> sequence = new ArrayList<>();
-                for(int i : subset) sequence.add(neighbours.get(i));
+                for (int i : subset)
+                    sequence.add(neighbours.get(i));
 
                 Collections.sort(sequence, Comparator.comparingDouble(i -> VRPInstance.nodes.get(i).tw_b));
 
+                BigInteger customerServed_1 = BigInteger.ZERO;
+                for (int cus : sequence) {
+                    customerServed_1 = customerServed_1.setBit(cus);
+                }
+
                 List<List<Integer>> newSequences = new ArrayList<>();
                 newSequences.add(sequence);
-                
+
                 ParetoFront pf = new ParetoFront();
-                pf.tryAddSchedule(new DroneSchedule(node, newSequences));
-                
-                S_1.put(new HashSet<>(sequence), pf);
+                DroneSchedule newDroneSchedule;
+                try {
+                    newDroneSchedule = new DroneSchedule(node, newSequences);
+                    pf.tryAddSchedule(newDroneSchedule);
+                } catch(IllegalArgumentException ex) {}
+
+                if(!pf.nonDominatedSchedules.isEmpty()) {
+                    S_1.put(customerServed_1, pf);
+                }
             }
 
             S_d.add(S_1);
 
-            for(int numDrone = 2; numDrone <= Constant.MAX_DRONE_PER_VEHICLE; numDrone++) {
+            for (int numDrone = 2; numDrone <= Constant.MAX_DRONE_PER_VEHICLE; numDrone++) {
                 System.out.println(node + " " + numDrone);
-                Map<Set<Integer>, ParetoFront> S_numDrone = new HashMap<>();
+                Map<BigInteger, ParetoFront> S_numDrone = new HashMap<>();
+
+                Set<Integer> asdfjkl= new HashSet<>();
 
                 for(int numDrone_a = 1; numDrone_a <= numDrone/2; numDrone_a++) {
                     int numDrone_b = numDrone - numDrone_a;
 
-                    for(var set_numDrone_a : S_d.get(numDrone_a).entrySet()) {
-                        for(var set_numDrone_b : S_d.get(numDrone_b).entrySet()) {
+                    for (var set_numDrone_a : S_d.get(numDrone_a).entrySet()) {
+                        for (var set_numDrone_b : S_d.get(numDrone_b).entrySet()) {
 
+                            // if(numDrone_a == numDrone_b
+                            // && set_numDrone_a.getKey().compareTo(set_numDrone_b.getKey()) > 0
+                            // ) continue;
+                            
                             for(DroneSchedule schedule_numDrone_a : set_numDrone_a.getValue().nonDominatedSchedules) {
                                 for(DroneSchedule schedule_numDrone_b : set_numDrone_b.getValue().nonDominatedSchedules) {
 
                                     DroneSchedule combined = combine(schedule_numDrone_a, schedule_numDrone_b);
 
-                                    if(combined == null) continue;
-                                    
-                                    Set<Integer> combined_customerServed = new HashSet<>();
-                                    combined_customerServed.addAll(schedule_numDrone_a.customerServed);
-                                    combined_customerServed.addAll(schedule_numDrone_b.customerServed);
+                                    if (combined == null || asdfjkl.contains(hashCode(combined)))
+                                        continue;
+                                    asdfjkl.add(hashCode(combined));
 
-                                    if(combined_customerServed.size() > Constant.MAX_NEIGHBOURS_PER_NEIGHBOURHOOD) continue;
+                                    BigInteger combined_customerServed = schedule_numDrone_a.customerServed
+                                                                     .or(schedule_numDrone_b.customerServed);
+
+                                    if (combined_customerServed.bitCount() > Constant.MAX_NEIGHBOURS_PER_NEIGHBOURHOOD)
+                                        continue;
 
                                     ParetoFront pf = S_numDrone.getOrDefault(combined_customerServed, new ParetoFront());
                                     pf.tryAddSchedule(combined);
@@ -193,6 +225,14 @@ public class DroneScheduleEnumeration {
             paretoMap.add(S_d);
 
         }
+    }
+
+    private int hashCode(DroneSchedule schedule) {
+        int hash = 0;
+        for (List<Integer> sub : schedule.sequences) {
+            hash += sub.hashCode();   // commutative: order doesn't matter
+        }
+        return hash;
     }
 
 }

@@ -1,26 +1,25 @@
-import java.util.HashSet;
+import java.math.BigInteger;
 import java.util.List;
-import java.util.Set;
 
 public class DroneSchedule {
     public int src;
     public List<List<Integer>> sequences;
     public double makespan;
     public double maxStartingTime;
-    public Set<Integer> customerServed;
+    public BigInteger customerServed;
 
     public DroneSchedule(int src, List<List<Integer>> sequences) {
         this.src = src;
         this.sequences = sequences;
         this.makespan = -1;
         this.maxStartingTime = Double.MAX_VALUE;
-        this.customerServed = new HashSet<>();
+        this.customerServed = BigInteger.ZERO;
 
-        for(var droneSequence : sequences) {
+        for(List<Integer> sequence : sequences) {
             double singleTime = 0;
-            for(int customer : droneSequence) {
-                if(customerServed.contains(customer)) throw new IllegalArgumentException("Customer(s) served more than once");
-                customerServed.add(customer);
+            for(int customer : sequence) {
+                if(this.customerServed.testBit(customer)) throw new IllegalArgumentException("Customer(s) served more than once");
+                this.customerServed = this.customerServed.setBit(customer);
 
                 singleTime += Constant.DRONE_SETUP_TIME
                             + VRPInstance.distMatrix[src][customer] / Constant.DRONE_SPEED
@@ -29,14 +28,16 @@ public class DroneSchedule {
                 
                 double startTime = VRPInstance.nodes.get(customer).tw_b - singleTime; // starting time enough to serve customer before customer's deadline
 
-                if(startTime < this.maxStartingTime) this.maxStartingTime = startTime; 
+                if(startTime < this.maxStartingTime) this.maxStartingTime = Math.min(startTime, VRPInstance.nodes.get(customer).tw_a); 
             }
             if(singleTime > this.makespan) this.makespan = singleTime;
         }
 
+        if(this.maxStartingTime < 0) throw new IllegalArgumentException("MaxStartingTime must not be negative");
+
     }
 
-    public DroneSchedule(int src, List<List<Integer>> sequences, double makespan, double maxStartingTime, Set<Integer> customerServed) {
+    public DroneSchedule(int src, List<List<Integer>> sequences, double makespan, double maxStartingTime, BigInteger customerServed) {
         this.src = src;
         this.sequences = sequences;
         this.makespan = makespan;
@@ -47,8 +48,8 @@ public class DroneSchedule {
     public int getNumDrone() { return this.sequences.size(); }
 
     public boolean equals(DroneSchedule other) {
-        return this.makespan == other.makespan
-            && this.maxStartingTime == other.maxStartingTime;
+        return Math.abs(this.makespan - other.makespan) < Constant.EPSILON
+            && Math.abs(this.maxStartingTime - other.maxStartingTime) <= Constant.EPSILON;
     }
 
     public boolean dominates(DroneSchedule other) {
@@ -63,8 +64,8 @@ public class DroneSchedule {
         sb.append("DroneSchedule: [");
 
         sb.append("numDrones: ").append(sequences.size())
-        .append(", makespan: ").append(String.format("%5.1f", makespan))
-        .append(", maxStartingTime: ").append(String.format("%5.1f", maxStartingTime));
+        .append(", makespan: ").append(String.format("%7.3f", makespan))
+        .append(", maxStartingTime: ").append(String.format("%7.3f", maxStartingTime));
 
         sb.append("]");
         return sb.toString();
