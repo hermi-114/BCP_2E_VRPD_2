@@ -1,3 +1,5 @@
+import com.gurobi.gurobi.*;
+
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;
 import java.math.BigInteger;
@@ -7,30 +9,48 @@ import java.util.List;
 public class Main {
     public static void main(String[] args) {
 
-        
         String fileName = "C101.txt";
         String fileOutName = "output.txt";
-        boolean printSwitch = false;
 
         DataLoader.load("./data/Solomon/" + fileName);
 
         long startTime = System.currentTimeMillis();
 
-        VRPInstance.calculateDistance();
+        VRPInstance.calculateDistance(); // System.out.println(VRPInstance.nodes.get(0).toString());
 
         DroneScheduleEnumeration droneSchedulesEnum = new DroneScheduleEnumeration();
         droneSchedulesEnum.solve();
 
+        ColumnGeneration columnGeneration = new ColumnGeneration();
+        try {
+            columnGeneration.solve();
+            
+        } catch (GRBException e) {
+            e.printStackTrace();
+        }
+
+
+
         long endTime = System.currentTimeMillis();
 
-        if(printSwitch) {
+        if(Config.PRINT_SWITCH_FILE) {
             printParetoFront("./output/" + fileOutName);
             // printParetoFront(10);
         }
 
+        if(Config.PRINT_SWITCH_CMD) {
+            printRoutePool();
+        }
+
         
-        System.out.printf("Progamme runs in %ds\n", (endTime-startTime)/1000);        
+        System.out.printf("\nProgamme runs in %ds\n", (endTime-startTime)/1000);        
         
+    }
+
+    public static void printRoutePool() {
+        for(Route route : VRPInstance.routePool) {
+            System.out.println(route);
+        }
     }
     
     public static void printParetoFront(int customer) {

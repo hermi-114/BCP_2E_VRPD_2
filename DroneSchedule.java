@@ -1,48 +1,87 @@
 import java.math.BigInteger;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+
 
 public class DroneSchedule {
     public int src;
     public List<List<Integer>> sequences;
     public double makespan;
     public double maxStartingTime;
-    public BigInteger customerServed;
+    public Set<Integer> customerServed;
+    public BigInteger customerServedHashed;
+    public double reducedCost = 1;
 
     public DroneSchedule(int src, List<List<Integer>> sequences) {
         this.src = src;
         this.sequences = sequences;
         this.makespan = -1;
         this.maxStartingTime = Double.MAX_VALUE;
-        this.customerServed = BigInteger.ZERO;
+        this.customerServed = new HashSet<>();
+        this.customerServedHashed = BigInteger.ZERO;
 
         for(List<Integer> sequence : sequences) {
             double singleTime = 0;
             for(int customer : sequence) {
-                if(this.customerServed.testBit(customer)) throw new IllegalArgumentException("Customer(s) served more than once");
-                this.customerServed = this.customerServed.setBit(customer);
-
-                singleTime += Constant.DRONE_SETUP_TIME
-                            + VRPInstance.distMatrix[src][customer] / Constant.DRONE_SPEED
-                            + VRPInstance.nodes.get(customer).servingTime / 2
-                            + VRPInstance.distMatrix[src][customer] / Constant.DRONE_SPEED;
+                if(this.customerServed.contains(customer))
+                    throw new IllegalArgumentException("Customer(s) served more than once");
                 
-                double startTime = VRPInstance.nodes.get(customer).tw_b - singleTime; // starting time enough to serve customer before customer's deadline
+                this.customerServed.add(customer);
+                this.customerServedHashed = this.customerServedHashed.setBit(customer);
 
-                if(startTime < this.maxStartingTime) this.maxStartingTime = Math.min(startTime, VRPInstance.nodes.get(customer).tw_a); 
+                double timeEnoughToServingCompleted = singleTime 
+                                       + Constant.DRONE_SETUP_TIME
+                                       + VRPInstance.distMatrix[src][customer] / Constant.DRONE_SPEED
+                                       + VRPInstance.nodes.get(customer).servingTime/2;
+                        
+                double latestStart = VRPInstance.nodes.get(customer).tw_b - timeEnoughToServingCompleted;
+
+                if(latestStart < this.maxStartingTime) this.maxStartingTime = latestStart;
+                
+                singleTime = timeEnoughToServingCompleted + VRPInstance.distMatrix[customer][src] / Constant.DRONE_SPEED;
+                
             }
             if(singleTime > this.makespan) this.makespan = singleTime;
         }
 
-        if(this.maxStartingTime < 0) throw new IllegalArgumentException("MaxStartingTime must not be negative");
+        if(this.maxStartingTime < 0) throw new IllegalArgumentException("Max starting time must not be negative");
 
     }
 
-    public DroneSchedule(int src, List<List<Integer>> sequences, double makespan, double maxStartingTime, BigInteger customerServed) {
+    public DroneSchedule(int src, List<List<Integer>> sequences, double makespan, double maxStartingTime, BigInteger customerServedHashed) {
+        this.src = src;
+        this.sequences = sequences;
+        this.makespan = makespan;
+        this.maxStartingTime = maxStartingTime;
+        this.customerServed = new HashSet<>();
+        this.customerServedHashed = customerServedHashed;
+
+        for(int i = 0; i < customerServedHashed.bitLength(); i++) {
+            if(customerServedHashed.testBit(i)) this.customerServed.add(i);
+        }
+    }
+
+    public DroneSchedule(int src, List<List<Integer>> sequences, double makespan, double maxStartingTime, Set<Integer> customerServed) {
         this.src = src;
         this.sequences = sequences;
         this.makespan = makespan;
         this.maxStartingTime = maxStartingTime;
         this.customerServed = customerServed;
+
+        for(int cust : customerServed) {
+            this.customerServedHashed = this.customerServedHashed.setBit(cust);
+        }
+    }
+
+    public DroneSchedule(int src) {  // empty drone schedule, using in pricing, not in drone schedule enumeration
+        this.src = src;
+        this.sequences = Collections.emptyList();
+        this.makespan = 0.0;
+        this.maxStartingTime = Double.MAX_VALUE;
+        this.customerServed = Collections.emptySet();
+        this.customerServedHashed = BigInteger.ZERO;
     }
 
     public int getNumDrone() { return this.sequences.size(); }

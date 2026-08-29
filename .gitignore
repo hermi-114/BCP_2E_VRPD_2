@@ -1,2 +1,4 @@
 *.class
 output/*
+Test.java
+*.ilp

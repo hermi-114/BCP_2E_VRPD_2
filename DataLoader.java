@@ -35,9 +35,9 @@ public class DataLoader {
                 int demand = (int)Double.parseDouble(attrs[3]);
                 double readyTime = Double.parseDouble(attrs[4]) / 60;
                 double deadline = Double.parseDouble(attrs[5]) / 60;
-                // double truckServiceTime = Double.parseDouble(attrs[6]);
+                double truckServiceTime = Double.parseDouble(attrs[6]) / 60; // m -> h
 
-                Node node = new Node(id-1, xCoor, yCoor, demand, readyTime, deadline);
+                Node node = new Node(id-1, xCoor, yCoor, demand, readyTime, deadline, truckServiceTime);
 
                 VRPInstance.nodes.add(node);
 
