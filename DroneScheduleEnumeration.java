@@ -106,8 +106,14 @@ public class DroneScheduleEnumeration {
             return null;
 
         if (!d1.customerServedHashed.and(d2.customerServedHashed).equals(BigInteger.ZERO))
-            return null; // schedule_1.cusServed ^ schedule_2.cusServed != 0 -> same customer(s) served by both schedule 
+            return null; // schedule_1.cusServed ^ schedule_2.cusServed != 0 -> same customer(s) served by both schedule
+            
 
+        int totalDemand = calculateDemand(d1);
+        totalDemand += calculateDemand(d2);
+        double truckRemainingCapacity = Constant.TRUCK_PAYLOAD - (d1.getNumDrone() + d2.getNumDrone()) * Constant.DRONE_AND_EQUIPMENT_WEIGHT;
+        if(totalDemand - truckRemainingCapacity > 0) return null;
+        
         BigInteger newCustomerServed = d1.customerServedHashed.or(d2.customerServedHashed);
 
         List<List<Integer>> newSequences = new ArrayList<>();
@@ -129,7 +135,7 @@ public class DroneScheduleEnumeration {
 
         buildNodeNeighbourhood();
 
-        paretoMap.add(Collections.emptyList()); // depot
+        paretoMap.add(Collections.emptyList()); // node 0: depot
 
         int nodeIterTime = Math.min(Constant.TOTAL_CUSTOMER, Config.MAX_NODE_LOOP);
 
@@ -195,9 +201,12 @@ public class DroneScheduleEnumeration {
 
                                     DroneSchedule combined = combine(schedule_numDrone_a, schedule_numDrone_b);
 
-                                    if (combined == null || sequencesSet.contains(hashCode(combined)))
-                                        continue;
-                                    sequencesSet.add(hashCode(combined));
+                                    if (combined == null) continue;
+
+                                    // check if sequeces have appeared before
+                                    int hash = hashCode(combined);
+                                    if(sequencesSet.contains(hash)) continue;
+                                    sequencesSet.add(hash);
 
                                     BigInteger combined_customerServedHashed = schedule_numDrone_a.customerServedHashed
                                                                      .or(schedule_numDrone_b.customerServedHashed);
@@ -224,12 +233,19 @@ public class DroneScheduleEnumeration {
         }
     }
 
-    private int hashCode(DroneSchedule schedule) {
+    // method hash the drone schedule 's sequences
+    private static int hashCode(DroneSchedule schedule) {
         int hash = 0;
         for (List<Integer> sub : schedule.sequences) {
             hash += sub.hashCode();   // commutative: order doesn't matter
         }
         return hash;
+    }
+
+    private int calculateDemand(DroneSchedule schedule) {
+        int demand = 0;
+        for(int cust : schedule.customerServed) demand += VRPInstance.nodes.get(cust).demand;
+        return demand;
     }
 
 }

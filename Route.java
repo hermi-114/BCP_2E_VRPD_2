@@ -42,7 +42,7 @@ public class Route {
             int curr = sequence.get(i).id;
             int prev = sequence.get(i-1).id;
 
-            double drivingTime = VRPInstance.distMatrix[prev][curr];
+            double drivingTime = VRPInstance.distMatrix[prev][curr]/Constant.TRUCK_SPEED;
             double servingTime = sequence.get(i).servingTime;
             DroneSchedule schedule = customerDroneSchedule.getOrDefault(curr, null);
             if(schedule != null) servingTime = Math.max(servingTime, schedule.makespan);
@@ -56,6 +56,7 @@ public class Route {
         int max = 0;
         for(var customer : sequence) {
             DroneSchedule schedule = customerDroneSchedule.get(customer.id);
+            if(schedule == null) continue;
             if(schedule.getNumDrone() > max)
                 max = schedule.getNumDrone();
         }
@@ -68,12 +69,12 @@ public class Route {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("Route: [id=%s, sequence=%s]", id, getSequence()));
-        sb.append("\t|| Drones: [");
+        sb.append(String.format("Route: id=%-4d | sequence=%-15s", id, getSequence()));
+        sb.append("\t|| Drones: ");
         for(var schedule : customerDroneSchedule.entrySet()) {
             sb.append("\t").append(schedule.getKey()).append("-").append(schedule.getValue().sequences.toString());
         }
-        sb.append("\t]");
+        
         return sb.toString();
 
     }

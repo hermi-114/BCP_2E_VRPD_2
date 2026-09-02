@@ -2,3 +2,4 @@
 output/*
 Test.java
 *.ilp
+*.log

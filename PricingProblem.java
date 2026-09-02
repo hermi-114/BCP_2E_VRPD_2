@@ -16,15 +16,19 @@ public class PricingProblem {
     // Arc costs = PhysicalCost - dualVariables[customer] (if customer is served)
     // Find path with most negative reduced cost
 
-    public PricingProblem() {}
+    CuttingPlanes cuttingPlanes;
+
+    public PricingProblem(CuttingPlanes cuttingPlanes) {
+        this.cuttingPlanes = cuttingPlanes;
+    }
     
-    public Route findBestRoute(double[] pi, int maxDrones) {
+    public Route findBestRoute(double[] pi, int maxDrones, double dualTruck, double dualDrone) {
         double bestReducedCost = Double.POSITIVE_INFINITY;
         Route bestRoute = null;
 
         for(int d = 0; d <= maxDrones; d++) {
 
-            Route candidate = solveRCSPForDrones(d, pi);
+            Route candidate = solveRCSPForDrones(d, pi, dualTruck, dualDrone);
 
             if(candidate == null) continue;
 
@@ -40,7 +44,7 @@ public class PricingProblem {
         return bestRoute;
     }
 
-    private Route solveRCSPForDrones(int d, double[] pi) {
+    private Route solveRCSPForDrones(int d, double[] pi, double dualTruck, double dualDrone) {
 
         RCSPGraph graph = buildGraph(d, pi);
 
@@ -113,8 +117,13 @@ public class PricingProblem {
                 }
             }
 
-            if(bestSinkLabel != null && bestSinkLabel.cost < -Constant.EPSILON)
-                return reconstructRoute(bestSinkLabel);
+            
+        }
+
+        if(bestSinkLabel != null && bestSinkLabel.cost < -Constant.EPSILON) {
+            Route route = reconstructRoute(bestSinkLabel);
+            route.reducedCost -= dualTruck + d*dualDrone;
+            return route;
         }
 
         return null;
@@ -137,42 +146,46 @@ public class PricingProblem {
                 if(i == j) continue;
 
                 double drivingTime = VRPInstance.distMatrix[i][j] / Constant.TRUCK_SPEED;
-                double servingTime = VRPInstance.nodes.get(j).servingTime;
-                double physicalCost = drivingTime + servingTime;
-                double reducedCost = physicalCost; // initial trucks do not have duals
+                double reducedCost = drivingTime; // initial trucks do not have duals
 
                 List<Integer> customerServed = null;
                 if(j != 0) {
                     reducedCost -= pi[j-1];
+                    if(cuttingPlanes != null) reducedCost += cuttingPlanes.getReducedCostPenaltyForTruckArc(i, j, d);
                     customerServed = List.of(j);
                 }
                 
-                RCSPARC arc = new RCSPARC(from, j, reducedCost, physicalCost, customerServed);
+                RCSPARC arc = new RCSPARC(from, j, reducedCost, drivingTime, customerServed);
                 graph.adjacencyList.get(from).add(arc);
             }
         }
 
 
         // ====== INITIALIZE DRONE ARC: from i to i' ====== 
-        for(int i = 0; i < totalNode; i++) {
+        for(int i = 1; i <= Constant.TOTAL_CUSTOMER; i++) {
             int to = i + totalNode;
+            double servingTime = VRPInstance.nodes.get(i).servingTime;
 
             DroneSchedule emptySchedule = new DroneSchedule(i);
-            RCSPARC emptyArc = new RCSPARC(i, to, 0.0, 0.0, new ArrayList<>(), emptySchedule);
+            RCSPARC emptyArc = new RCSPARC(i, to, servingTime, servingTime, new ArrayList<>(), emptySchedule);
             graph.adjacencyList.get(i).add(emptyArc);
 
-            if(d == 0 || i == 0) continue;
+            if(d == 0) continue;
+            if(i >= DroneScheduleEnumeration.paretoMap.size()) continue; // !!!!!!!!! xXxXxXxXx  -  DO NOT DELETE THIS LINE  -  xXxXxXxXx !!!!!!!!!
+            if(d >= DroneScheduleEnumeration.paretoMap.get(i).size()) continue;
 
             Set<Entry<BigInteger, ParetoFront>> schedules = DroneScheduleEnumeration.paretoMap.get(i).get(d).entrySet();
 
             for(var entry : schedules) {
                 for(DroneSchedule schedule : entry.getValue().nonDominatedSchedules) {
-                    double physicalCost = schedule.makespan;
+                    double physicalCost = Math.max(servingTime, schedule.makespan);
 
                     double reducedCost = physicalCost;
                     for(int cust : schedule.customerServed) {
                         reducedCost -= pi[cust-1]; // pi 0-based
                     }
+
+                    if(cuttingPlanes != null) reducedCost += cuttingPlanes.getReducedCostPenaltyForDroneArc(i, schedule, d);
 
                     schedule.reducedCost = reducedCost;
                     double time = schedule.makespan;
@@ -210,7 +223,6 @@ public class PricingProblem {
         for(int cust : sequence) routeSequence.add(VRPInstance.nodes.get(cust));
 
         Route route = new Route(routeSequence, droneScheduleMap);
-
         route.reducedCost = sinkLabel.cost;
 
         return route;

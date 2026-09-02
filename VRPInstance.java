@@ -1,6 +1,7 @@
 import java.util.ArrayList;
 import java.util.List;
 
+
 public class VRPInstance {
     
     public static List<Node> nodes = new ArrayList<>();

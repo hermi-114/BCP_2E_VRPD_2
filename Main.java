@@ -9,10 +9,11 @@ import java.util.List;
 public class Main {
     public static void main(String[] args) {
 
-        String fileName = "C101.txt";
-        String fileOutName = "output.txt";
+        String fileOutName_drone = "drone.txt";
+        String fileOutName_route = "route.txt";
 
-        DataLoader.load("./data/Solomon/" + fileName);
+        DataLoader.loadCustomer("./data/Solomon/" + (Config.INPUT_TYPE + Config.INPUT_SET + ".txt"));   // get customers' information
+        DataLoader.loadFleet();                                                                         // get truck's capacity
 
         long startTime = System.currentTimeMillis();
 
@@ -20,6 +21,8 @@ public class Main {
 
         DroneScheduleEnumeration droneSchedulesEnum = new DroneScheduleEnumeration();
         droneSchedulesEnum.solve();
+
+        long end_drone_enum = System.currentTimeMillis();
 
         ColumnGeneration columnGeneration = new ColumnGeneration();
         try {
@@ -29,27 +32,40 @@ public class Main {
             e.printStackTrace();
         }
 
-
+        long end_column_gen = System.currentTimeMillis();
 
         long endTime = System.currentTimeMillis();
 
-        if(Config.PRINT_SWITCH_FILE) {
-            printParetoFront("./output/" + fileOutName);
+        if(Config.PRINT_DRONE) {
+            printParetoFront("./output/" + fileOutName_drone);
             // printParetoFront(10);
         }
 
-        if(Config.PRINT_SWITCH_CMD) {
-            printRoutePool();
+        if(Config.PRINT_ROUTE) {
+            printRoutePool("./output/" + fileOutName_route);
         }
-
         
-        System.out.printf("\nProgamme runs in %ds\n", (endTime-startTime)/1000);        
+        System.out.printf("\nDrone Schedules Enumeration: %ds\n", (end_drone_enum - startTime)/1000);
+        System.out.printf("Column generation: %ds\n", (end_column_gen - end_drone_enum)/1000);
+        
+        System.out.printf("\nProgamme runs in %ds\n", (endTime - startTime)/1000);
         
     }
 
-    public static void printRoutePool() {
-        for(Route route : VRPInstance.routePool) {
-            System.out.println(route);
+    public static void printRoutePool(String fileName) {
+        PrintWriter out;
+
+        try {
+            out = new PrintWriter(fileName);
+
+            for(var route : VRPInstance.routePool.entrySet()) {
+                out.println(route.getValue());
+            }
+
+            out.close();
+
+        } catch (FileNotFoundException e) {
+            System.err.println("File not found " + e.getMessage());
         }
     }
     
