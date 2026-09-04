@@ -1,58 +1,80 @@
 import java.util.Arrays;
 
 import com.gurobi.gurobi.GRBException;
-import java.rmi.StubNotFoundException;
+import java.util.List;
 
 public class ColumnGeneration {
 
-    private final int maxLoopTime = 1000; // for test
     // public static final Set<String> existedSequences = new HashSet<>();
 
     public void solve() throws GRBException {
         MasterProblem master = new MasterProblem(Constant.TOTAL_CUSTOMER);
-        CuttingPlanes cuttingPlanes = null;
-        cuttingPlanes = new CuttingPlanes();
+        CuttingPlanes cuttingPlanes  = new CuttingPlanes();
         PricingProblem pricing = new PricingProblem(cuttingPlanes);
+        CutGeneration cutGeneration = new CutGeneration();
 
-        int loopTime = 0;
-        while (true && (loopTime++ < maxLoopTime)) {
-            // while(true) {
+        double[] lambda;
 
-            System.out.println("========== Column Generation Iteration " + loopTime + " ==========");
+        int loopTime;
+        while(true) {
 
-            master.solve();
-            
-            if(cuttingPlanes != null) cuttingPlanes.updateDuals(master);
+            // ========== COLUMN GENERATION ========
+            loopTime = 0;
 
-            double[] pi = master.getDualVariables();
-            double dualTruck = master.getDualVehicle();
-            double dualDrone = master.getDualDrone();
-            Route bestRoute = pricing.findBestRoute(pi, Constant.MAX_DRONE_PER_VEHICLE, dualTruck, dualDrone);
+            while(true) {
+    
+                System.out.println("========== Column Generation Iteration " + loopTime++ + " ==========");
+    
+                try {
+                    master.solve();
+                } catch (GRBException e) {
+                    System.err.println("Master infeasible");
+                    master.dispose();
+                    return;
+                }
+                
+                cuttingPlanes.updateDuals(master);
+    
+                double[] pi = master.getDualVariables();
+                double dualTruck = master.getDualVehicle();
+                double dualDrone = master.getDualDrone();
+                Route bestRoute = pricing.findBestRoute(pi, Constant.MAX_DRONE_PER_VEHICLE, dualTruck, dualDrone);
 
-            if (bestRoute == null) {
-                break;
+                if(bestRoute == null) break;
+    
+                if (bestRoute.reducedCost >= -Constant.EPSILON) {
+                    break;
+                }
+    
+                master.addRealColumn(bestRoute, cuttingPlanes);
+    
+                VRPInstance.routePool.add(bestRoute);
+
+                logIteration(bestRoute, dualDrone, pi);
             }
 
-            if (bestRoute.reducedCost >= -Constant.EPSILON) {
-                break;
+
+
+            // ======== CUT GENERATION ========
+            lambda = master.getPrimeVariables();
+            List<ICut> newCuts = cutGeneration.separateCuts(VRPInstance.routePool, lambda);
+
+            if(newCuts.isEmpty()) break;
+
+            for(ICut cut : newCuts) {
+                cuttingPlanes.addCut(cut);
+                master.addCut(cut);
             }
 
-            master.addRealColumn(bestRoute, cuttingPlanes);
-
-            VRPInstance.routePool.add(bestRoute);
-
-            logIteration(bestRoute, master.objectiveValue, pi);
         }
+
 
         // get all dummies remaining in the routePool
         // if one found, the customer is cannot be served
 
         double[] dummyVals = master.artificialValues;
-        double[] weights = master.getPrimeVariables();
+        lambda = master.getPrimeVariables();
         master.dispose();
-
-        System.out.println(Arrays.toString(weights));
-        System.out.println(weights.length);
 
         for (var val : dummyVals) {
             if (val > Constant.EPSILON) {
@@ -60,6 +82,10 @@ public class ColumnGeneration {
                 System.out.println(val);
             }
         }
+
+        System.out.println(Arrays.toString(lambda));
+        System.out.println(lambda.length);
+
 
         System.out.println("Generated " + VRPInstance.routePool.size() + " real routes");
     }

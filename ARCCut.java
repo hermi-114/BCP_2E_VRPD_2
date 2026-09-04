@@ -6,17 +6,26 @@ public class ARCCut implements ICut {
     public final int rhs;
     public final int k;
     public double dual = 0;
-
+    
     public ARCCut(Set<Integer> C) {
         this.subsetC = C;
-
+        
         double totalDemand = subsetC.stream()
-                .mapToInt(cust -> VRPInstance.nodes.get(cust).demand)
-                .sum();
-
+        .mapToInt(cust -> VRPInstance.nodes.get(cust).demand)
+        .sum();
+        
         this.k = (int) Math.floor(Constant.TRUCK_PAYLOAD / Constant.DRONE_AND_EQUIPMENT_WEIGHT);
-        this.rhs = (int) Math.ceil(totalDemand / Constant.DRONE_PAYLOAD - Constant.EPSILON);
+        this.rhs = (int) Math.ceil(totalDemand / Constant.DRONE_AND_EQUIPMENT_WEIGHT - Constant.EPSILON);
     }
+    
+    @Override
+    public void setDual(double newDual) { this.dual = newDual; }
+    
+    @Override
+    public double getRHS() { return this.rhs; }
+    
+    @Override
+    public Set<Integer> getSubsetC() { return this.subsetC; }
 
     @Override
     public double getCoefficientForRoute(Route route) {
@@ -57,14 +66,6 @@ public class ARCCut implements ICut {
     @Override
     public double getDual() { return this.dual; }
 
-    @Override
-    public void setDual(double newDual) { this.dual = newDual; }
-
-    @Override
-    public double getRHS() { return this.rhs; }
-
-    @Override
-    public Set<Integer> getSubsetC() { return this.subsetC; }
 
 
 }

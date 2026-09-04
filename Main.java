@@ -58,8 +58,8 @@ public class Main {
         try {
             out = new PrintWriter(fileName);
 
-            for(var route : VRPInstance.routePool.entrySet()) {
-                out.println(route.getValue());
+            for(var route : VRPInstance.routePool) {
+                out.println(route);
             }
 
             out.close();

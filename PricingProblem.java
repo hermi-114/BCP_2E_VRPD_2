@@ -23,8 +23,9 @@ public class PricingProblem {
     }
     
     public Route findBestRoute(double[] pi, int maxDrones, double dualTruck, double dualDrone) {
-        double bestReducedCost = Double.POSITIVE_INFINITY;
+
         Route bestRoute = null;
+        double bestReducedCost = Double.POSITIVE_INFINITY;
 
         for(int d = 0; d <= maxDrones; d++) {
 
@@ -35,7 +36,7 @@ public class PricingProblem {
             // if(ColumnGeneration.existedSequences.contains(candidate.getSequence())) continue;
 
             double reducedCost = candidate.reducedCost;
-            if(reducedCost < bestReducedCost - Constant.EPSILON) {
+            if(reducedCost < bestReducedCost) {
                 bestRoute = candidate;
                 bestReducedCost = reducedCost;
             }
@@ -120,9 +121,9 @@ public class PricingProblem {
             
         }
 
-        if(bestSinkLabel != null && bestSinkLabel.cost < -Constant.EPSILON) {
+        if(bestSinkLabel != null && bestSinkLabel.cost < 0) {
             Route route = reconstructRoute(bestSinkLabel);
-            route.reducedCost -= dualTruck + d*dualDrone;
+            route.reducedCost = bestSinkLabel.cost - dualTruck - d*dualDrone;
             return route;
         }
 
@@ -233,6 +234,7 @@ public class PricingProblem {
     }
 
     private boolean isDominated(Label newLabel, TreeMap<Double, List<Label>> buckets) {
+
         for(var entry : buckets.entrySet()) {
             if(entry.getKey() - newLabel.cost > Constant.EPSILON) break;
 
@@ -240,9 +242,10 @@ public class PricingProblem {
                 if(newLabel.node != label.node) continue;
 
                 if (label.cost <= newLabel.cost + Constant.EPSILON &&
-                    label.time <= newLabel.time + Constant.EPSILON) {
-                        if(label.ngSet.containsAll(newLabel.ngSet)) return true;
-                    }
+                    label.time <= newLabel.time + Constant.EPSILON &&
+                    label.ngSet.containsAll(newLabel.ngSet)
+                ) return true;
+                    
             }
         }
 
@@ -286,8 +289,8 @@ public class PricingProblem {
         double time;
         Set<Integer> ngSet = new HashSet<>();
         List<Integer> customerServed = new ArrayList<>();
-        Label predecessor = null;
-        RCSPARC arc = null;
+        Label predecessor;
+        RCSPARC arc;
 
         Label(int node) {
             this.node = node;

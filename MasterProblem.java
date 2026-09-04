@@ -1,6 +1,7 @@
 import java.util.ArrayList;
 import java.util.List;
 import com.gurobi.gurobi.*;
+import java.awt.color.ICC_ColorSpace;
 import java.lang.reflect.Array;
 
 
@@ -15,7 +16,7 @@ public class MasterProblem {
     private List<GRBVar> artificialVars;
     private List<GRBVar> realVars;
 
-    // private GRBLinExpr obj;
+    private GRBLinExpr objectiveFunc;
 
     public double[] artificialValues;
     public double objectiveValue;
@@ -29,7 +30,7 @@ public class MasterProblem {
         env.start();
         model = new GRBModel(env);
 
-        // obj = new GRBLinExpr();
+        objectiveFunc = new GRBLinExpr();
 
         artificialValues = new double[totalCustomer];
         cutsConstr = new ArrayList<>();
@@ -61,14 +62,15 @@ public class MasterProblem {
             GRBVar dummy = model.addVar(0, 1, M, GRB.CONTINUOUS, col, "dummy_" + i);
 
             artificialVars.add(dummy);
+            objectiveFunc.addTerm(M, dummy);
         }
 
         model.update();
     }
 
     public void addRealColumn(Route route, CuttingPlanes cuttingPlanes) throws GRBException {
+
         double cost = route.totalTime;
-        
         GRBColumn col = new GRBColumn();
         
         for(int customer : route.customerServed) {
@@ -77,19 +79,22 @@ public class MasterProblem {
         col.addTerm(1, truckConstr);
         col.addTerm(route.getNumDrone(), droneConstr);
 
-        if(cuttingPlanes != null) {
-            List<ARCCut> cuts = cuttingPlanes.cuts;
-            for(int i = 0; i < cuts.size(); i++) {
-                double coef = cuts.get(i).getCoeficientForRoute(route);
-                if(Math.abs(coef) > Constant.EPSILON) {
-                    col.addTerm(coef, cutsConstr.get(i));
-                }
+
+        List<ICut> cuts = cuttingPlanes.cuts;
+        
+        for(int i = 0; i < cuts.size(); i++) {
+            double coef = cuts.get(i).getCoefficientForRoute(route);
+            if(Math.abs(coef) > Constant.EPSILON) {
+                col.addTerm(coef, cutsConstr.get(i));
             }
         }
+        
 
         GRBVar realVar = model.addVar(0, 1, cost, GRB.CONTINUOUS, col, "real_" + realVars.size());
         
         realVars.add(realVar);
+        objectiveFunc.addTerm(cost, realVar);
+        
         model.update();
     }
 
@@ -112,23 +117,18 @@ public class MasterProblem {
     }
 
     public double[] getPrimeVariables() throws GRBException {
-        double[] weights = new double[realVars.size()];
+        double[] lambda = new double[realVars.size()];
 
         for(int i = 0; i < realVars.size(); i++) {
-            weights[i] = realVars.get(i).get(GRB.DoubleAttr.X);
+            lambda[i] = realVars.get(i).get(GRB.DoubleAttr.X);
         }
 
-        return weights;
+        return lambda;
     }
 
     public void solve() throws GRBException {
+
         model.set(GRB.IntParam.Method, 1);
-
-        // for(var realVar : realVars) obj.addTerm(1, realVar);
-        // for(var unrealVar : artificialVars) obj.addTerm(1, unrealVar);
-
-        // model.setObjective(obj, GRB.MINIMIZE);
-        // model.update();
         model.optimize();
 
         if(Config.PRINT_SWITCH_CMD) System.out.println("Solving...");
@@ -145,12 +145,10 @@ public class MasterProblem {
             
             artificialValues = extractArtificialVariableValues();
         } else if (status == GRB.Status.INFEASIBLE) {
-            if(Config.PRINT_SWITCH_CMD) System.err.println("Model is infeasible. Computing IIS...");
-            model.computeIIS();
-            model.write("model_infeasible.ilp");
+            throw new GRBException("Master LP is infeasible! ", status);
 
         } else {
-            throw new RuntimeException("RMP optimization failed with status code " + status);
+            throw new GRBException("Master LP failed with status " + status, status);
         }
     }
 
@@ -162,17 +160,15 @@ public class MasterProblem {
     public double getDualVehicle() throws GRBException { return truckConstr.get(GRB.DoubleAttr.Pi); }
     public double getDualDrone() throws GRBException { return droneConstr.get(GRB.DoubleAttr.Pi); }
 
+    
     public void addCut(ICut cut) throws GRBException {
-        GRBLinExpr lhs = new GRBLinExpr();
-        GRBConstr constr = model.addConstr(lhs, GRB.GREATER_EQUAL, cut.getRHS(), "cut_" + cutsConstr.size());
+        GRBConstr constr = model.addConstr(new GRBLinExpr(), GRB.GREATER_EQUAL, cut.getRHS(), "cut_" + cutsConstr.size());
         cutsConstr.add(constr);
 
         model.update();
 
     }
 
-    public GRBConstr getCutConstraint(int index) {
-        return cutsConstr.get(index);
-    }
+    public GRBConstr getCutConstraint(int index) { return cutsConstr.get(index); }
     
 }
