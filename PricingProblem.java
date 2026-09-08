@@ -29,7 +29,7 @@ public class PricingProblem {
 
         for(int d = 0; d <= maxDrones; d++) {
 
-            Route candidate = solveRCSPForDrones(d, pi, dualTruck, dualDrone);
+            Route candidate = solveRCSP(d, pi, dualTruck, dualDrone);
 
             if(candidate == null) continue;
 
@@ -45,7 +45,7 @@ public class PricingProblem {
         return bestRoute;
     }
 
-    private Route solveRCSPForDrones(int d, double[] pi, double dualTruck, double dualDrone) {
+    private Route solveRCSP(int d, double[] pi, double dualTruck, double dualDrone) {
 
         RCSPGraph graph = buildGraph(d, pi);
 
@@ -152,7 +152,7 @@ public class PricingProblem {
                 List<Integer> customerServed = null;
                 if(j != 0) {
                     reducedCost -= pi[j-1];
-                    if(cuttingPlanes != null) reducedCost += cuttingPlanes.getReducedCostPenaltyForTruckArc(i, j, d);
+                    reducedCost += cuttingPlanes.getReducedCostPenaltyForTruckArc(i, j, d);
                     customerServed = List.of(j);
                 }
                 
@@ -172,7 +172,6 @@ public class PricingProblem {
             graph.adjacencyList.get(i).add(emptyArc);
 
             if(d == 0) continue;
-            if(i >= DroneScheduleEnumeration.paretoMap.size()) continue; // !!!!!!!!! xXxXxXxXx  -  DO NOT DELETE THIS LINE  -  xXxXxXxXx !!!!!!!!!
             if(d >= DroneScheduleEnumeration.paretoMap.get(i).size()) continue;
 
             Set<Entry<BigInteger, ParetoFront>> schedules = DroneScheduleEnumeration.paretoMap.get(i).get(d).entrySet();
@@ -186,7 +185,7 @@ public class PricingProblem {
                         reducedCost -= pi[cust-1]; // pi 0-based
                     }
 
-                    if(cuttingPlanes != null) reducedCost += cuttingPlanes.getReducedCostPenaltyForDroneArc(i, schedule, d);
+                    reducedCost += cuttingPlanes.getReducedCostPenaltyForDroneArc(i, schedule, d);
 
                     schedule.reducedCost = reducedCost;
                     double time = schedule.makespan;
@@ -210,12 +209,12 @@ public class PricingProblem {
         while(current.predecessor != null) {
             RCSPARC arc = current.arc;
             if(arc != null) {
-                if(arc.droneSchedule != null) droneScheduleMap.put(arc.src, arc.droneSchedule);
-                else {
-                    if(arc.dst != 0) {
-                        sequence.add(0, arc.dst);
-                    }
+                if(arc.droneSchedule != null) {
+                    droneScheduleMap.put(arc.src, arc.droneSchedule);
+                } else if(arc.dst != 0) {
+                    sequence.add(0, arc.dst);
                 }
+                
             }
             current = current.predecessor;
         }

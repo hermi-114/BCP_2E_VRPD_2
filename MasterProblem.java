@@ -1,14 +1,13 @@
+import com.gurobi.gurobi.*;
+
 import java.util.ArrayList;
 import java.util.List;
-import com.gurobi.gurobi.*;
-import java.awt.color.ICC_ColorSpace;
-import java.lang.reflect.Array;
 
 
 public class MasterProblem {
 
     private GRBEnv env;
-    private GRBModel model;
+    public GRBModel model;
     private GRBConstr[] coverConstr;
     private GRBConstr truckConstr;
     private GRBConstr droneConstr;
@@ -98,7 +97,7 @@ public class MasterProblem {
         model.update();
     }
 
-    public double[] extractArtificialVariableValues() throws GRBException {
+    public double[] getArtificials() throws GRBException {
         double[] values = new double[artificialVars.size()];
 
         for(int i = 0; i < artificialVars.size(); i++) {
@@ -108,7 +107,7 @@ public class MasterProblem {
         return values;
     }
 
-    public double[] getDualVariables() throws GRBException {
+    public double[] getDuals() throws GRBException {
         double[] pi = new double[coverConstr.length];
         for (int i = 0; i < coverConstr.length; i++) {
             pi[i] = coverConstr[i].get(GRB.DoubleAttr.Pi);
@@ -116,7 +115,7 @@ public class MasterProblem {
         return pi;
     }
 
-    public double[] getPrimeVariables() throws GRBException {
+    public double[] getReals() throws GRBException {
         double[] lambda = new double[realVars.size()];
 
         for(int i = 0; i < realVars.size(); i++) {
@@ -143,7 +142,7 @@ public class MasterProblem {
             }
 
             
-            artificialValues = extractArtificialVariableValues();
+            artificialValues = getDuals();
         } else if (status == GRB.Status.INFEASIBLE) {
             throw new GRBException("Master LP is infeasible! ", status);
 

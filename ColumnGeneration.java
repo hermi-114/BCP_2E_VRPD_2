@@ -1,6 +1,7 @@
 import java.util.Arrays;
 
 import com.gurobi.gurobi.GRBException;
+import java.util.ArrayList;
 import java.util.List;
 
 public class ColumnGeneration {
@@ -35,7 +36,7 @@ public class ColumnGeneration {
                 
                 cuttingPlanes.updateDuals(master);
     
-                double[] pi = master.getDualVariables();
+                double[] pi = master.getDuals();
                 double dualTruck = master.getDualVehicle();
                 double dualDrone = master.getDualDrone();
                 Route bestRoute = pricing.findBestRoute(pi, Constant.MAX_DRONE_PER_VEHICLE, dualTruck, dualDrone);
@@ -56,24 +57,16 @@ public class ColumnGeneration {
 
 
             // ======== CUT GENERATION ========
-            lambda = master.getPrimeVariables();
-            List<ICut> newCuts = cutGeneration.separateCuts(VRPInstance.routePool, lambda);
+            lambda = master.getReals();
+            // List<ICut> newCuts = cutGeneration.separate(VRPInstance.routePool, lambda);
+            List<ICut> newCuts = new ArrayList<>();
 
             if(newCuts.isEmpty()) break;
 
-            for(ICut cut : newCuts) {
-                cuttingPlanes.addCut(cut);
-                master.addCut(cut);
-            }
-
         }
 
-
-        // get all dummies remaining in the routePool
-        // if one found, the customer is cannot be served
-
         double[] dummyVals = master.artificialValues;
-        lambda = master.getPrimeVariables();
+        lambda = master.getReals();
         master.dispose();
 
         for (var val : dummyVals) {
@@ -104,13 +97,13 @@ public class ColumnGeneration {
 
         System.out.printf("Master Obj : %.10f%n", masterObjective);
 
-        // System.out.print("Duals : [");
-        // for (int i = 0; i < duals.length; i++) {
-        // if (i > 0) {
-        // System.out.print(", ");
-        // }
-        // System.out.printf("%.6f", duals[i]);
-        // }
+        System.out.print("Duals : [");
+        for (int i = 0; i < duals.length; i++) {
+        if (i > 0) {
+        System.out.print(", ");
+        }
+        System.out.printf("%.6f", duals[i]);
+        }
         System.out.println("]\n\n");
     }
 }

@@ -1,7 +1,7 @@
 public class Config {
 
     public static String INPUT_TYPE = "C";
-    public static String INPUT_SET = "101";
+    public static String INPUT_SET = "104";
 
     public static int MAX_NODE_LOOP = 100;
 

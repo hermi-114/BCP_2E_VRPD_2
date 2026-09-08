@@ -144,8 +144,10 @@ public class DroneScheduleEnumeration {
 
             List<Integer> neighbours = nodeNeighbourhood.get(node);
 
-            if (neighbours == null || neighbours.isEmpty())
+            if (neighbours == null || neighbours.isEmpty()) {
+                paretoMap.add(Collections.emptyList());
                 continue;
+            }
 
             List<List<Integer>> subsets = getSubsets(neighbours.size());
 
