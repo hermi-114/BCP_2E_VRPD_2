@@ -6,8 +6,8 @@ import java.util.List;
 import java.util.Set;
 
 public class CutGeneration {
-    private static final int MAX_CUTS_PER_ROUND = 100;
-    private static final double VIOLATION_THRESHOLD = 1e-3;
+    private static final int MAX_CUTS_PER_ROUND = 50;
+    private static final double VIOLATION_THRESHOLD = 1e-2;
 
     public CutGeneration() {}
 
@@ -26,7 +26,7 @@ public class CutGeneration {
     private List<ICut> separateARCC(List<Route> routes, double[] lambda) {
         List<ICut> cuts = new ArrayList<>();
         int totalCustomer = Constant.TOTAL_CUSTOMER;
-        int k = (int) Math.floor((double) Constant.TRUCK_PAYLOAD / Constant.DRONE_AND_EQUIPMENT_WEIGHT);
+        int k = (int) Math.floor((double) Constant.TRUCK_PAYLOAD / Constant.DRONE_AND_EQUIPMENT_WEIGHT + 1e-7);
 
         for(int cust = 1; cust <= totalCustomer; cust++) {
             Set<Integer> C = new HashSet<>();
@@ -39,7 +39,7 @@ public class CutGeneration {
 
                     Set<Integer> test = new HashSet<>(C);
                     test.add(candidate);
-                    double vio = computeARCCViolation(C, routes, lambda, k);
+                    double vio = computeARCCViolation(test, routes, lambda, k);
                     if(vio > bestViolation) {
                         bestViolation = vio;
                         best = candidate;
@@ -66,7 +66,7 @@ public class CutGeneration {
                             .mapToInt(c -> VRPInstance.nodes.get(c).demand)
                             .sum();
                 
-        double rhs = Math.ceil(totalDemand / Constant.DRONE_PAYLOAD - Constant.EPSILON);
+        double rhs = Math.ceil(totalDemand / Constant.DRONE_AND_EQUIPMENT_WEIGHT - 1e-7);
         double lhs = 0;
         for(int r = 0; r < routes.size(); r++) {
             if(lambda[r] < Constant.EPSILON) continue; // route is not used in solution

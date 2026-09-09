@@ -68,12 +68,14 @@ public class MasterProblem {
         model.update();
     }
 
-    public void addRealColumn(Route route, CuttingPlanes cuttingPlanes) throws GRBException {
+    public void addColumn(Route route, CuttingPlanes cuttingPlanes) throws GRBException {
+        // System.out.println("Master.addColumn: customerServed = " + route.customerServed);
 
         double cost = route.totalTime;
         GRBColumn col = new GRBColumn();
         
         for(int customer : route.customerServed) {
+            if (customer == 0) continue;
             col.addTerm(1, coverConstr[customer-1]); // constraint in [0, totalCustomer)
         }
         col.addTerm(1, truckConstr);
@@ -82,6 +84,9 @@ public class MasterProblem {
 
         List<ICut> cuts = cuttingPlanes.cuts;
         
+        if (route.customerServed.isEmpty()) {
+            System.out.println("WARNING: customerServed is empty! Route: " + route);
+}
         for(int i = 0; i < cuts.size(); i++) {
             double coef = cuts.get(i).getCoefficientForRoute(route);
             if(Math.abs(coef) > Constant.EPSILON) {
@@ -108,7 +113,7 @@ public class MasterProblem {
         return values;
     }
 
-    public double[] getDualVariables() throws GRBException {
+    public double[] getDuals() throws GRBException {
         double[] pi = new double[coverConstr.length];
         for (int i = 0; i < coverConstr.length; i++) {
             pi[i] = coverConstr[i].get(GRB.DoubleAttr.Pi);
@@ -116,7 +121,7 @@ public class MasterProblem {
         return pi;
     }
 
-    public double[] getPrimeVariables() throws GRBException {
+    public double[] getPrimes() throws GRBException {
         double[] lambda = new double[realVars.size()];
 
         for(int i = 0; i < realVars.size(); i++) {
@@ -162,9 +167,17 @@ public class MasterProblem {
 
     
     public void addCut(ICut cut) throws GRBException {
-        GRBConstr constr = model.addConstr(new GRBLinExpr(), GRB.GREATER_EQUAL, cut.getRHS(), "cut_" + cutsConstr.size());
+        GRBLinExpr lhs = new GRBLinExpr();
+        char sense;
+        if (cut instanceof ARCCut) {
+            sense = GRB.GREATER_EQUAL;
+        } else if (cut instanceof R1Cut) {
+            sense = GRB.LESS_EQUAL;
+        } else {
+            throw new IllegalArgumentException("Unknown cut type");
+        }
+        GRBConstr constr = model.addConstr(lhs, sense, cut.getRHS(), "cut_" + cutsConstr.size());
         cutsConstr.add(constr);
-
         model.update();
 
     }

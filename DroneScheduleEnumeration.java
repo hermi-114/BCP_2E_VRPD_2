@@ -144,8 +144,10 @@ public class DroneScheduleEnumeration {
 
             List<Integer> neighbours = nodeNeighbourhood.get(node);
 
-            if (neighbours == null || neighbours.isEmpty())
+            if (neighbours == null || neighbours.isEmpty()) {
+                paretoMap.add(Collections.emptyList());
                 continue;
+            }
 
             List<List<Integer>> subsets = getSubsets(neighbours.size());
 
@@ -234,7 +236,7 @@ public class DroneScheduleEnumeration {
     }
 
     // method hash the drone schedule 's sequences
-    private static int hashCode(DroneSchedule schedule) {
+    public static int hashCode(DroneSchedule schedule) {
         int hash = 0;
         for (List<Integer> sub : schedule.sequences) {
             hash += sub.hashCode();   // commutative: order doesn't matter

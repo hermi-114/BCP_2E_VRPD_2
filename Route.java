@@ -1,4 +1,6 @@
 import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -87,5 +89,47 @@ public class Route {
         return sb.toString();
     }
 
+    public String getSignature() {
+        StringBuilder sb = new StringBuilder();
+        
+        // 1. Truck sequence (including depot at both ends)
+        for (Node node : sequence) {
+            sb.append(node.id).append(",");
+        }
+        sb.append("|");
+        
+        // 2. Drone schedules – sorted by parking node
+        List<Integer> keys = new ArrayList<>(customerDroneSchedule.keySet());
+        Collections.sort(keys);
+        
+        for (int key : keys) {
+            DroneSchedule schedule = customerDroneSchedule.get(key);
+            sb.append(key).append(":");  // parking node
+            
+            // Sort the sequences lexicographically to ensure order independence
+            // for multiple drones, but preserve the order of round‑trips within each drone.
+            List<List<Integer>> sortedSequences = new ArrayList<>(schedule.sequences);
+            sortedSequences.sort((a, b) -> {
+                int min = Math.min(a.size(), b.size());
+                for (int i = 0; i < min; i++) {
+                    int cmp = Integer.compare(a.get(i), b.get(i));
+                    if (cmp != 0) return cmp;
+                }
+                return Integer.compare(a.size(), b.size());
+            });
+            
+            for (List<Integer> seq : sortedSequences) {
+                sb.append("[");
+                for (int i = 0; i < seq.size(); i++) {
+                    sb.append(seq.get(i));
+                    if (i < seq.size() - 1) sb.append(",");
+                }
+                sb.append("]");
+            }
+            sb.append("|");
+        }
+        
+        return sb.toString();
+    }
     
 }
