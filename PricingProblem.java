@@ -1,187 +1,278 @@
 import java.math.BigInteger;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
-import java.util.TreeMap;
+
 
 public class PricingProblem {
     
+    public enum PricingStage {
+        LIGHT,      // stage 1: one label per bucket
+        HEURISTIC,  // stage 2: ignore ng-set and cut state
+        EXACT       // stage 3: full dominance
+    }
     // Build graph G^d
     // Run Bucket Graph Labeling Algorithm
     // Arc costs = PhysicalCost - dualVariables[customer] (if customer is served)
     // Find path with most negative reduced cost
 
     CuttingPlanes cuttingPlanes;
+    List<RCSPGraph> graphs;
+
+    @SuppressWarnings("unchecked")
+    List<Label>[][][] buckets = (List<Label>[][][]) new List[Constant.TOTAL_CUSTOMER + 1][Config.SIZE_BUCKET][Config.SIZE_BUCKET]; // v, B_d, B_c
+    
+    Label[][][] dominatingLabels = new Label[Constant.TOTAL_CUSTOMER + 1][Config.SIZE_BUCKET][Config.SIZE_BUCKET];
+    
+    List<Route> newRoutes = new ArrayList<>();
+    
+    Set<String> signatures = new HashSet<>();
 
     public PricingProblem(CuttingPlanes cuttingPlanes) {
         this.cuttingPlanes = cuttingPlanes;
     }
 
-    public List<Route> findBestRoutes(double[] pi, int maxDrones, double dualTruck, double dualDrone, Set<String> usedRoutes) {
-        List<Route> newRoutes = new ArrayList<>();
-
-        int oriNgSize = Constant.LABEL_MAX_NG_SIZE;
-        int maxD = maxDrones + 1;
-        
-
-        int totalBudget = 210;
-        int remainingBudget = totalBudget;
-
-        for(int d = 0; d < maxD && remainingBudget > 0; d++) {
-            
-            Constant.LABEL_MAX_NG_SIZE = Math.min(3, oriNgSize);
-
-            int stage1Limit = Math.min(remainingBudget, 30);
-            List<Route> stage1 = solveRCSPLimit(d, pi, dualTruck, dualDrone, stage1Limit, 10_000 , usedRoutes);
-            remainingBudget -= stage1.size();
-            newRoutes.addAll(stage1);
-            
-
-            Constant.LABEL_MAX_NG_SIZE = oriNgSize;
-
-            if(remainingBudget <= 0) break;
-
-            int stage2Limit = Math.min(remainingBudget, 30);
-            List<Route> stage2 = solveRCSPLimit(d, pi, dualTruck, dualDrone, stage2Limit, 50_000, usedRoutes);
-            remainingBudget -= stage2.size();
-            newRoutes.addAll(stage2);
-
-            if(remainingBudget <= 0) break;
-
-            int stage3Limit = Math.min(remainingBudget, 150);
-            List<Route> stage3 = solveRCSPLimit(d, pi, dualTruck, dualDrone, stage3Limit, Integer.MAX_VALUE, usedRoutes);
-            remainingBudget -= stage3.size();
-            newRoutes.addAll(stage3);
-
-        }
-
-        // System.out.println(newRoutes.size());
-
-        return newRoutes;
+    private static class RCSPGraph {
+        List<List<RCSPArc>> adjacencyList;
     }
 
-    private List<Route> solveRCSPLimit(int d, double[] pi, double dualTruck, double dualDrone, int maxColumn, int maxLabel, Set<String> usedRoutes) {
-        List<Route> newRoutes = new ArrayList<>();
+    // || ========================================================================= ||
+    // || ====================== BUCKET GRAPH LABELLING =========================== ||
+    // || ========================================================================= ||
 
-        RCSPGraph graph = buildGraph(d, pi);
-        int src = Constant.TOTAL_CUSTOMER + 1; // 0'
-        Label srcLabel = new Label(src);
-        srcLabel.time = srcLabel.cost = 0;
+    public void runThreeStagePricing(double[] pi, double dualTruck, double dualDrone) {
 
-        TreeMap<Double, List<Label>> buckets = new TreeMap<>();
-        addLabelToBucket(buckets, srcLabel, 0);
+        // Stage 1 – light
+        solveRCSP(pi, dualTruck, dualDrone, PricingStage.LIGHT);
 
-        int sinkCount = 0;
-        int countProcessedLabel = 0;
-        while(!buckets.isEmpty() && countProcessedLabel < maxLabel) {
-            List<Label> labels = buckets.pollFirstEntry().getValue();
+        // Stage 2 – heuristic
+        solveRCSP(pi, dualTruck, dualDrone, PricingStage.HEURISTIC);
+
+        // Stage 3 – exact
+        solveRCSP(pi, dualTruck, dualDrone, PricingStage.EXACT);
+    }
+
+    // =========================================================================
+    // ---------------------------- MAIN LOOP ----------------------------------
+    // =========================================================================
+    private void solveRCSP(double[] pi, double dualTruck, double dualDrone, PricingStage stage) {
+
+        buildGraphs(pi);
+        int size = Config.SIZE_BUCKET;
+        for(int i = 0; i <= Constant.TOTAL_CUSTOMER; i++) for(int j = 0; j < size; j++) for(int k = 0; k < size; k++) {
+            buckets[i][j][k] = new ArrayList<>();
+        }
+
+
+        for(int d = 0; d <= Constant.MAX_DRONE_PER_VEHICLE; d++) {
+        
+            int src = Constant.TOTAL_CUSTOMER + 1; // 0'
+            Label srcLabel = new Label(src);
             
-            countProcessedLabel += labels.size();
-            for(Label label : labels) {
-                if(newRoutes.size() >= maxColumn) break;
+            addLabelToBucket(srcLabel, stage);
+            
+            RCSPGraph graph = graphs.get(d);
+            
+            for(int idx = 1; idx <= Constant.TOTAL_CUSTOMER+1; idx++)
+             for(int i = 0; i < Config.SIZE_BUCKET; i++)
+              for(int j = 0; j < Config.SIZE_BUCKET; j++) {
 
-                if(label.node == 0) { // reach sink label
+                List<Label> labels = buckets[idx % (Constant.TOTAL_CUSTOMER + 1)][i][j];
 
-                    sinkCount++;
-                    // System.out.println("Sink reached: " + sinkCount + ", cost = " + label.cost);
-
-                    if(label.cost < 0) {
-                        Route route = reconstructRoute(label);
-                        route.reducedCost = label.cost - dualTruck - d*dualDrone;
-
-                        String sig = route.getSignature();
-                        if (route.reducedCost < 0 && !usedRoutes.contains(sig)) {
-                            newRoutes.add(route);
-                            usedRoutes.add(sig);
-                            // System.out.println(" V  ADDED: rc=" + route.reducedCost + ", sig=" + sig);
-                        } else {
-                            // System.out.println(" X  SKIPPED: rc=" + route.reducedCost + ", inUsed=" + usedRoutes.contains(sig) + ", sig=" + sig);
-                        }
+                for(Label label : new ArrayList<>(labels)) {
+                    if(label.node == 0) { // sink label, complete a route
+                        if(label.reducedCost < 0) {
+                            Route route = reconstructRoute(label);
                             
-                    }
-
-                    continue; // reach sink, continue finding routes
-                }
-
-                for(RCSPARC arc : graph.adjacencyList.get(label.node)) {
-                    if (arc.customerServed != null) {
-                        boolean alreadyServed = false;
-                        for (int cust : arc.customerServed) {
-                            if (label.customerServed.contains(cust)) {
-                                alreadyServed = true;
-                                break;
+                            route.reducedCost = label.reducedCost - dualTruck - d*dualDrone;
+                            String sig = route.getSignature();
+                            
+                            // check if valid: reduced cost, existance
+                            // TODO
+                            if (route.reducedCost >= Constant.EPSILON ||
+                                signatures.contains(sig)) {
+                                continue;
                             }
+
+                            newRoutes.add(route);
+                            signatures.add(sig);
+
                         }
-                        if (alreadyServed) continue;
+                        continue;
                     }
 
-                    double newTime = label.time + arc.time;
-                    if(newTime > Constant.TRUCK_MAX_SHIFT_TIME) continue;
+                    for(RCSPArc arc : graph.adjacencyList.get(label.node % (1 + Constant.TOTAL_CUSTOMER))) {
+                        
+                        // check if valid customer served
+                        if(!label.customerServed.and(arc.customerServed).equals(BigInteger.ZERO)) continue;
 
-                    Label newLabel = new Label(arc.dst);
-                    newLabel.time = newTime;
-                    newLabel.cost = label.cost + arc.cost;
-                    newLabel.predecessor = label;
-                    newLabel.arc = arc;
+                        // check if new duration is valid
+                        // TODO
+                        double newDuration = label.duration + arc.duration;
+                        double newCapacity = label.capacity + arc.capacity;
+                        double newReducedCost = label.reducedCost + arc.reducedCost;
+                        
 
-                    newLabel.ngSet.addAll(label.ngSet);
-                    newLabel.ngDeque.addAll(label.ngDeque);
-                    newLabel.addToNg(label.node);
+                        Label newLabel = new Label(arc.dst);
+                        newLabel.arc = arc;
+                        newLabel.duration = newDuration;
+                        newLabel.capacity = newCapacity;
+                        newLabel.reducedCost = newReducedCost;
+                        newLabel.predecessor = label;
+                        newLabel.customerServed = label.customerServed.or(arc.customerServed);
 
-                    newLabel.customerServed.addAll(label.customerServed);
-                    if(arc.customerServed != null) newLabel.customerServed.addAll(arc.customerServed);
-
-                    if(!isDominated(newLabel, buckets)) {
-                        double bucketKey = Math.round(newLabel.cost * 10000.0) / 10000.0;
-                        addLabelToBucket(buckets, newLabel, bucketKey); 
+                        addLabelToBucket(newLabel, stage);
+      
                     }
-
                 }
             }
-
-            if(newRoutes.size() >= maxColumn) break;
+            
 
         }
 
-        // System.out.println(newRoutes.size());
+        
 
-        return newRoutes;
+    }
+
+    private void addLabelToBucket(Label newLabel, PricingStage stage) {
+        int v = newLabel.node;
+        Node cust = VRPInstance.nodes.get(newLabel.node);
+
+        double tw_size = cust.tw_b - cust.tw_a;
+        double capa_size = (double) Constant.TRUCK_PAYLOAD / Config.SIZE_BUCKET;
+
+        int B_c = (int) Math.floor(newLabel.capacity / capa_size);
+        int B_d = (int) Math.floor((newLabel.duration - cust.tw_a) / tw_size);
+
+        if (B_d < 0 || B_d >= Config.SIZE_BUCKET
+        ||  B_c < 0 || B_c >= Config.SIZE_BUCKET
+            ) return;
+
+        // is dominated in current bucket
+        List<Label> bucket = buckets[v][B_d][B_c];
+
+        switch (stage) {
+            case LIGHT     -> addLabelLight(newLabel, bucket);
+            case HEURISTIC -> addLabelWithDominance(newLabel, v, B_d, B_c, bucket, false);
+            case EXACT     -> addLabelWithDominance(newLabel, v, B_d, B_c, bucket, true);
+        }
+    }
+
+    private void addLabelLight(Label newLabel, List<Label> bucket) {
+        if (bucket.isEmpty()) {
+            bucket.add(newLabel);
+            return;
+        }
+
+        Label best = bucket.get(0);
+        if (newLabel.reducedCost < best.reducedCost - Constant.EPSILON) {
+            bucket.clear();
+            bucket.add(newLabel);
+        }
+    }
+
+    private void addLabelWithDominance(Label newLabel, int v, int Bd, int Bc, List<Label> bucket, boolean checkNgAndCuts) {
+
+        // 1. Check domination inside the same bucket
+        Iterator<Label> it = bucket.iterator();
+        while (it.hasNext()) {
+            Label label = it.next();
+            if (isDominates(label, newLabel, checkNgAndCuts)) return;
+            if (isDominates(newLabel, label, checkNgAndCuts)) it.remove();
+        }
+
+        // 2. Check domination by component-wise smaller buckets
+        for (int i = 0; i < Bd; i++) {
+            for (int j = 0; j < Bc; j++) {
+                for (Label label : buckets[v][i][j]) {
+                    if (isDominates(label, newLabel, checkNgAndCuts)) return;
+                }
+            }
+        }
+
+        // 3. Add the new label
+        bucket.add(newLabel);
+
+        // 4. Update the best label for this bucket (if you use it)
+        if (dominatingLabels[v][Bd][Bc] == null ||
+            isDominates(newLabel, dominatingLabels[v][Bd][Bc], checkNgAndCuts)
+        ) dominatingLabels[v][Bd][Bc] = newLabel;
+        
+    }
+
+    private boolean isDominates(Label a, Label b, boolean checkNgAndCuts) {
+        if (a == null || b == null) return false;
+        if (a.node != b.node) return false;
+
+        // Resource consumption: a must be <= b
+        if (a.duration > b.duration + Constant.EPSILON) return false;
+        if (a.capacity > b.capacity + Constant.EPSILON) return false;
+
+        // ng-set (^) and cut state (6)
+        if (checkNgAndCuts) {
+            // ^ : a.customerServed must be a subset of b.customerServed
+            if (!b.customerServed.and(a.customerServed).equals(a.customerServed)) {
+                return false;
+            }
+            // 6 : if you have a cut-state field, check it here.
+            // Example (simplified):
+            // if (a.cutState > b.cutState) return false;
+        }
+        // Reduced cost: a must be <= b
+
+        // add cut (6)
+        // TODO
+
+        return a.reducedCost <= b.reducedCost + Constant.EPSILON;
+    }
+
+
+
+    // =========================================================================
+    // ---------------------------- BUILD GRAPH --------------------------------
+    // =========================================================================
+
+    private void buildGraphs(double[] pi) {
+        graphs = new ArrayList<>();
+
+        for(int numDrone = 0; numDrone <= Constant.MAX_DRONE_PER_VEHICLE; numDrone++) {
+            graphs.add(buildGraph(numDrone, pi));
+        }
     }
 
     private RCSPGraph buildGraph(int d, double[] pi) {
         RCSPGraph graph = new RCSPGraph();
-        int totalNode = Constant.TOTAL_CUSTOMER + 1;
-        int numNode = 2 * totalNode;
+        int size_V_plus = Constant.TOTAL_CUSTOMER + 1;
+        int totalNode = 2 * size_V_plus;
 
-        for(int i = 0; i < numNode; i++) {
+        for(int i = 0; i < totalNode; i++) {
             graph.adjacencyList.add(new ArrayList<>());
         }
 
 
-        // ====== INITIALIZE TRUCK ARC: from i' to j ====== 
-        for(int i = 0; i < totalNode; i++) {
-            int from = totalNode + i;
-            for(int j = 0; j < totalNode; j++) {
+        // ================== INITIALIZE TRUCK ARC: from i' to j ================== 
+        for(int i = 0; i < size_V_plus; i++) {
+            int from = size_V_plus + i;
+            for(int j = 0; j < size_V_plus; j++) {
                 if(i == j) continue;
 
                 double drivingTime = VRPInstance.distMatrix[i][j] / Constant.TRUCK_SPEED;
-                double reducedCost = drivingTime; // initial trucks do not have duals
+                double reducedCost = drivingTime - pi[j-1];
+                double capacity = VRPInstance.nodes.get(j).demand;
 
-                List<Integer> customerServed = null;
+                BigInteger customerServed = BigInteger.ZERO;
                 if(j != 0) {
-                    reducedCost -= pi[j-1];
-                    reducedCost += cuttingPlanes.getReducedCostPenaltyForTruckArc(i, j, d);
-                    customerServed = List.of(j);
+                    // reducedCost += cuttingPlanes.getReducedCostPenaltyForTruckArc(i, j, d);
+                    customerServed = customerServed.setBit(j);
                 }
                 
-                RCSPARC arc = new RCSPARC(from, j, reducedCost, drivingTime, customerServed);
-                graph.adjacencyList.get(from).add(arc);
+                RCSPArc arc = new RCSPArc(from, j, drivingTime, capacity, reducedCost, customerServed, null);
+                graph.adjacencyList.get(i).add(arc);
 
                 // if (i == 0) {
                 //     System.out.println("Arc from 0' to " + j + ": drivingTime=" + drivingTime + ", reducedCost=" + reducedCost);
@@ -190,35 +281,38 @@ public class PricingProblem {
         }
 
 
-        // ====== INITIALIZE DRONE ARC: from i to i' ====== 
+        // ================== INITIALIZE DRONE ARC: from i to i' ================== 
         for(int i = 1; i <= Constant.TOTAL_CUSTOMER; i++) {
-            int to = i + totalNode;
+            int to = i + size_V_plus;
             double servingTime = VRPInstance.nodes.get(i).servingTime;
 
             DroneSchedule emptySchedule = new DroneSchedule(i);
-            RCSPARC emptyArc = new RCSPARC(i, to, servingTime, servingTime, new ArrayList<>(), emptySchedule);
+            RCSPArc emptyArc = new RCSPArc(i, to, servingTime, 0, servingTime, BigInteger.ZERO, emptySchedule);
             graph.adjacencyList.get(i).add(emptyArc);
 
             if(d == 0) continue;
 
             Set<Entry<BigInteger, ParetoFront>> schedules = DroneScheduleEnumeration.paretoMap.get(i).get(d).entrySet();
+            double baseCapacity = d * Constant.DRONE_AND_EQUIPMENT_WEIGHT;
 
             for(var entry : schedules) {
                 for(DroneSchedule schedule : entry.getValue().nonDominatedSchedules) {
-                    double physicalCost = Math.max(servingTime, schedule.makespan);
+                    double duration = Math.max(servingTime, schedule.makespan);
+                    double capacity = baseCapacity;
+                    BigInteger customerServed = BigInteger.ZERO.setBit(i);
 
-                    double reducedCost = physicalCost;
+                    double reducedCost = duration;
                     for(int cust : schedule.customerServed) {
                         reducedCost -= pi[cust-1]; // pi 0-based
+                        capacity += VRPInstance.nodes.get(cust).demand;
+                        customerServed = customerServed.setBit(cust);
                     }
 
-                    reducedCost += cuttingPlanes.getReducedCostPenaltyForDroneArc(i, schedule, d);
+                    // reducedCost += cuttingPlanes.getReducedCostPenaltyForDroneArc(i, schedule, d);
 
                     schedule.reducedCost = reducedCost;
-                    double time = schedule.makespan;
-                    List<Integer> servedCustomers = new ArrayList<>(schedule.customerServed);
 
-                    RCSPARC arc = new RCSPARC(i, to, reducedCost, time, servedCustomers, schedule);
+                    RCSPArc arc = new RCSPArc(i, to, duration, capacity, reducedCost, customerServed, schedule);
                     graph.adjacencyList.get(i).add(arc);
                 }
             }
@@ -228,17 +322,17 @@ public class PricingProblem {
         return graph;
     }
 
-    private Route reconstructRoute(Label sinkLabel) {
+    private Route reconstructRoute(Label sinkLabel) { // always 0
         List<Integer> sequence = new ArrayList<>();
         Map<Integer, DroneSchedule> droneScheduleMap = new HashMap<>();
         
         Label current = sinkLabel;
         while(current.predecessor != null) {
-            RCSPARC arc = current.arc;
+            RCSPArc arc = current.arc;
             if(arc != null) {
 
-                if(arc.droneSchedule != null)
-                    droneScheduleMap.put(arc.src, arc.droneSchedule);
+                if(arc.schedule != null)
+                    droneScheduleMap.put(arc.src, arc.schedule);
 
                 else if(arc.dst != 0)
                     sequence.add(0, arc.dst);
@@ -251,89 +345,9 @@ public class PricingProblem {
         for(int cust : sequence) routeSequence.add(VRPInstance.nodes.get(cust));
 
         Route route = new Route(routeSequence, droneScheduleMap);
-        route.reducedCost = sinkLabel.cost;
+        route.reducedCost = sinkLabel.reducedCost;
 
         return route;
-    }
-
-    private void addLabelToBucket(TreeMap<Double, List<Label>> buckets, Label label, double key) {
-        buckets.computeIfAbsent(key, k -> new ArrayList<>()).add(label);
-    }
-
-    private boolean isDominated(Label newLabel, TreeMap<Double, List<Label>> buckets) {
-
-        for(var entry : buckets.entrySet()) {
-            if(entry.getKey() - newLabel.cost > Constant.EPSILON) break;
-
-            for(Label label : entry.getValue()) {
-                if(newLabel.node != label.node) continue;
-
-                if(label.cost <= newLabel.cost + Constant.EPSILON
-                && label.time <= newLabel.time + Constant.EPSILON
-                && label.ngSet.containsAll(newLabel.ngSet)
-                && label.customerServed.containsAll(newLabel.customerServed)
-                ) return true;
-                    
-            }
-        }
-
-        return false;
-    }
-
-    private static class RCSPGraph {
-        List<List<RCSPARC>> adjacencyList = new ArrayList<>();
-    }
-
-    private static class RCSPARC {
-        int src, dst;
-        double cost;
-        double time; // truck waiting/driving time
-        List<Integer> customerServed;
-        DroneSchedule droneSchedule;
-
-        RCSPARC(int src, int dst, double cost, double time, List<Integer> customerServed) {
-            this.src = src;
-            this.dst = dst;
-            this.cost = cost;
-            this.time = time;
-            this.customerServed = customerServed;
-        }
-
-        public RCSPARC(int src, int dst, double cost, double time, List<Integer> customers, DroneSchedule schedule) {
-            this.src = src;
-            this.dst = dst;
-            this.cost = cost;
-            this.time = time;
-            this.customerServed = customers;
-            this.droneSchedule = schedule;
-        }
-
-        
-    }
-
-    private static class Label {
-        int node;
-        double cost;
-        double time;
-        Set<Integer> ngSet = new HashSet<>();
-        Deque<Integer> ngDeque = new ArrayDeque<>();
-        Set<Integer> customerServed = new HashSet<>();
-        Label predecessor;
-        RCSPARC arc;
-
-        Label(int node) {
-            this.node = node;
-        }
-
-        void addToNg(int node) {
-            if (ngSet.contains(node)) return;
-            ngDeque.addLast(node);
-            ngSet.add(node);
-            while (ngDeque.size() > Constant.LABEL_MAX_NG_SIZE) {
-                int oldest = ngDeque.pollFirst();
-                ngSet.remove(oldest);
-            }
-        }
-    }
+    }    
 
 }
