@@ -3,7 +3,7 @@ public class Config {
     public static String INPUT_TYPE = "C";
     public static String INPUT_SET = "101";
 
-    public static int SIZE_CUSTOMER_DATASET = 10;
+    public static int SIZE_CUSTOMER_DATASET = 5;
     
     public static int SIZE_BUCKET = 100;
     

@@ -50,7 +50,7 @@ public class BranchAndPrice {
                     minTime = lp.objective;
                     bestSolution = new ArrayList<>(node.forcedRoutes);
                     for (int i = 0; i < lp.lambda.length; i++)
-                        if (lp.lambda[i] > 0.5) bestSolution.add(lp.columns.get(i));
+                        if (lp.lambda[i] > 0.9) bestSolution.add(lp.columns.get(i));
                 }
                 continue;
             }

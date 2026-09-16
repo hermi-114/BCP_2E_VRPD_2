@@ -194,7 +194,8 @@ public class PricingProblem {
 
         // drone count
         int newDroneUsed = label.droneUsed;
-        if (arc.schedule != null && !arc.servedCustomersInOrder.isEmpty()) newDroneUsed += d;
+        if (arc.schedule != null && !arc.servedCustomersInOrder.isEmpty()) newDroneUsed = Math.max(newDroneUsed, d);
+        
 
         // lm-R1C state
         double[] newState = label.r1cState.clone();
@@ -290,7 +291,7 @@ public class PricingProblem {
             if (!b.customerServed.and(a.customerServed).equals(a.customerServed)) return false;
             if (!b.ngSet.and(a.ngSet).equals(a.ngSet)) return false;
             for (int c = 0; c < a.r1cState.length; c++)
-                if (a.r1cState[c] < b.r1cState[c] - Constant.EPSILON) return false;
+                if (a.r1cState[c] > b.r1cState[c] + Constant.EPSILON) return false;
         }
         return a.reducedCost <= b.reducedCost + Constant.EPSILON;
     }

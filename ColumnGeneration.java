@@ -107,7 +107,7 @@ public class ColumnGeneration {
         // ---------- 4. cut generation (bounded) ----------
         for (int cr = 0; cr < MAX_CUT_ROUNDS; cr++) {
             double[] lambda = master.getPrimes();
-            List<ICut> newCuts = cutGeneration.separateCuts(VRPInstance.routePool, lambda);
+            List<ICut> newCuts = cutGeneration.separateCuts(master.getRealRoutes(), lambda);
             if (newCuts.isEmpty()) break;
             for (ICut cut : newCuts) {
                 cuttingPlanes.addCut(cut);
