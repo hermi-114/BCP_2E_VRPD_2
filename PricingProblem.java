@@ -251,6 +251,14 @@ public class PricingProblem {
                                .or(BigInteger.ONE.shiftLeft(cust));
         }
 
+        BigInteger newCustomerServed = label.customerServed;
+        for (int cust : arc.servedCustomersInOrder) {
+            if (newCustomerServed.testBit(cust)) {
+                return null;                     // ← elementary check: reject revisit
+            }
+            newCustomerServed = newCustomerServed.setBit(cust);
+        }
+
         // --- time-window clamping ---
         int sizeV = Constant.TOTAL_CUSTOMER + 1;
         double arrival = label.duration + arc.duration;
@@ -314,6 +322,7 @@ public class PricingProblem {
         newLabel.reducedCost  = newReducedCost;
         newLabel.predecessor  = label;
         newLabel.ngSet        = newNgSet;
+        newLabel.customerServed = newCustomerServed;
         newLabel.d           = d;
         newLabel.droneUsed    = newDroneUsed;
         newLabel.r1cState     = newState;
@@ -439,7 +448,9 @@ public class PricingProblem {
         if (a.droneUsed > b.droneUsed) return false;
 
         if (checkNgAndCuts) {
+            if (!b.customerServed.and(a.customerServed).equals(a.customerServed)) return false;
             if (!b.ngSet.and(a.ngSet).equals(a.ngSet)) return false;
+
 
             // lm-R1C state dominance: A dominates B only if A is at least as
             // "advanced" on every cut's running sum as B.

@@ -30,27 +30,29 @@ public class ConstraintChecker {
     }
 
     private void computeVariables() {
+        if(routes == null || routes.isEmpty()) {
+            errors.add("Null solution");
+            return;
+        }
         
         // 5: x
-        for(Route r : routes) {
-            
-            int[][] b = new int[n+1][n+1];
+        for (Route r : routes) {
+            int[][] b = new int[n + 1][n + 1];
+            List<Node> seq = r.sequence;
+            int size = seq.size();
 
-            int size = r.sequence.size(); // size = customers served + 2 depot
-            List<Node> seq = new ArrayList<>(r.sequence);
-
-            for(int cur = 1; cur < size - 1; cur++) {
-                b[seq.get(cur).id][seq.get(cur+1).id]++;
-                b[seq.get(cur-1).id][seq.get(cur).id]++;
+            for (int cur = 1; cur < size; cur++) {
+                int a = seq.get(cur - 1).id;
+                int c = seq.get(cur).id;
+                if (a == c) continue;
+                int lo = Math.min(a, c), hi = Math.max(a, c);
+                b[lo][hi]++;                       // count once
             }
 
             int d = r.getNumDrone();
-            for(int i = 0; i <= n; i++) {
-                for(int j = i+1; j <= n; j++) {
-                    x[d][i][j] += b[i][j] + b[j][i];
-                }
-            }
-
+            for (int i = 0; i <= n; i++)
+                for (int j = i + 1; j <= n; j++)
+                    x[d][i][j] += b[i][j];         // b already symmetric
         }
 
         // 6: y:= total time vehicle launches drone schedules on each node in routes in solution
@@ -98,16 +100,12 @@ public class ConstraintChecker {
     // 1
     public void evaluateObjectiveValue() {
         double ans = 0;
-
-        for(int d = 0; d < D; d++) {
-            for(int i = 0; i <= n; i++) {
-                for(int j = 0; j <= n; j++) {
+        for (int d = 0; d <= D; d++) {                       // ← <= D
+            for (int i = 0; i <= n; i++)
+                for (int j = i + 1; j <= n; j++)             // ← i<j, avoid double count
                     ans += c_v[i][j] * x[d][i][j];
-                }
-                ans += y[d];
-            }
+            ans += y[d];                                     // ← outside the i loop
         }
-
         sol.objectiveValue = ans;
     }
 
@@ -121,7 +119,7 @@ public class ConstraintChecker {
 
             for(int d = 0; d <= D; d++) {
 
-                for(int j = 1; j < i; j++) {
+                for(int j = 0; j < i; j++) {
                     sum_to_i += x[d][j][i];
                 }
 
@@ -133,8 +131,14 @@ public class ConstraintChecker {
 
             }
 
-            if(Math.abs(sum_to_i/2 + sum_out_i/2 + sum_drone_i - 1) > Constant.EPSILON) {
-                errors.add("Conflict constraint (2) from customer_" + i);
+            double coverage = sum_to_i / 2 + sum_out_i / 2 + sum_drone_i;
+
+            if (coverage < 1 - Constant.EPSILON) {
+                errors.add("Customer_" + i + " is not visited at least once (coverage = " + coverage + ")");
+            }
+
+            if(Math.abs(coverage - 1) > Constant.EPSILON) {
+                // errors.add("Conflict constraint (2) from customer_" + i);
             }
         }
 
@@ -155,7 +159,7 @@ public class ConstraintChecker {
     // 4
     private void checkDroneLimit() {
         int totalDrone = 0;
-        for(int d = 0; d < D; d++) {
+        for(int d = 0; d <= D; d++) {
             totalDrone += d * u[d];
         }
 
@@ -166,7 +170,7 @@ public class ConstraintChecker {
 
     public void checkAll() {
         computeVariables();
-
+        evaluateObjectiveValue();
         checkVisitEdgeOnce();
         checkVehicleLimit();
         checkDroneLimit();

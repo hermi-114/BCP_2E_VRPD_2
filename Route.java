@@ -71,7 +71,7 @@ public class Route {
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append(String.format("Route: id=%-4d | sequence=%-15s", id, getSequence()));
+        sb.append(String.format("Route: id=%-4d | sequence=%-15s", id, getSequence())).append(String.format(" | time = %.2f ", totalTime));
         sb.append("\t|| Drones: ");
         for(var schedule : customerDroneSchedule.entrySet()) {
             sb.append("\t").append(schedule.getKey()).append("-").append(schedule.getValue().sequences.toString());

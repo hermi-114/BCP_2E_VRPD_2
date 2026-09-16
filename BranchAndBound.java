@@ -1,22 +1,27 @@
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Stack;
 
 public class BranchAndBound {
-    private BBNode currentMinNode = null;
-    private double currentMinTime = Double.MAX_VALUE;
+    private BBNode bestNode = null;
+    private Solution bestSolution = null;
+    private double minTime = Double.MAX_VALUE;
     private Map<Integer, Route> routeMap = new HashMap<>();
     List<List<Integer>> customerRoutes;
     
+    
+    public BranchAndBound() {
+        rewriteRoutesId();
+        mapping();
+    } 
 
+    
     private void rewriteRoutesId() {
         int id = 0;
         for(Route r : VRPInstance.routePool) {
             r.id = id++;
-            routeMap.put(r.id, r);
         }
     }
 
@@ -26,62 +31,80 @@ public class BranchAndBound {
         }
     }
 
-    private void routesForCustomer() {
-        customerRoutes = new ArrayList<>();
-        customerRoutes.add(Collections.emptyList());
+    // private void routesForCustomer() {
+    //     customerRoutes = new ArrayList<>();
+    //     customerRoutes.add(Collections.emptyList());
 
-        for(int cust = 1; cust <= Constant.TOTAL_CUSTOMER; cust++) {
-            List<Integer> selectedRoutes = new ArrayList<>();
-            for(Route r : VRPInstance.routePool) {
-                if(r.customerServedHashed.testBit(cust)) {
-                    selectedRoutes.add(r.id);
-                }
-            }
-            customerRoutes.add(selectedRoutes);
-        }
-    }
+    //     for(int cust = 1; cust <= Constant.TOTAL_CUSTOMER; cust++) {
+    //         List<Integer> selectedRoutes = new ArrayList<>();
+    //         for(Route r : VRPInstance.routePool) {
+    //             if(r.customerServedHashed.testBit(cust)) {
+    //                 selectedRoutes.add(r.id);
+    //             }
+    //         }
+    //         customerRoutes.add(selectedRoutes);
+    //     }
+    // }
 
-    private void sort() {
-        // TODO
-        for(int cust = 1; cust <= Constant.TOTAL_CUSTOMER; cust++) {
-            Collections.sort(customerRoutes.get(cust), Comparator.comparingDouble(r -> routeMap.get(r).totalTime));
-        }
+    // private void sort() {
+    //     // TODO
+    //     for(int cust = 1; cust <= Constant.TOTAL_CUSTOMER; cust++) {
+    //         Collections.sort(customerRoutes.get(cust), Comparator.comparingDouble(r -> routeMap.get(r).totalTime));
+    //     }
         
-    }
-
-    public BBNode travel(BBNode node, int currentLayer) {
-        
-        if(node.totalTime > currentMinTime) return null;
-
-        for(int rId : customerRoutes.get(currentLayer + 1)) {
-            Route route = routeMap.get(rId);
-        }
-
-        return null;
-    }
-
-    public boolean isDominated(BBNode node, Route route) {
-        return false;
-
-    }
+    // }
 
     public void run() {
-        rewriteRoutesId();
-        mapping();
-        routesForCustomer();
-        sort();
 
-    }
+        System.out.println("=================== Branch and bound ====================");
 
-    public Solution constructSolution(BBNode leaf) {
-        Solution sol = new Solution();
+        // routesForCustomer();
+        // sort();
 
-        for(int i = 0; i < routeMap.size(); i++) {
-            if(leaf.selectedRoutes.testBit(i)) sol.addRoute(routeMap.get(i));
+        Stack<Solution> solStack = new Stack<>();
+        Stack<Integer>  idxStack = new Stack<>();
+        solStack.push(new Solution());
+        idxStack.push(0);
+
+        int nRoutes = routeMap.size();
+
+        while (!solStack.isEmpty()) {
+            Solution sol = solStack.pop();
+            int nextIdx  = idxStack.pop();
+
+            // --- leaf: all routes decided ---
+            if (nextIdx >= nRoutes) {
+                if (sol.routes.isEmpty()) continue;         // empty is trivially invalid
+                ConstraintChecker check = new ConstraintChecker(sol);
+                check.checkAll();
+                if (check.isValid() && sol.objectiveValue() < minTime) {
+                    bestSolution = sol;
+                    minTime = sol.objectiveValue;
+                }
+                continue;
+            }
+
+            // --- optional pruning (see section below) ---
+            // if (sol.routes.size() > Constant.MAX_VEHICLE) continue;
+
+            Route r = routeMap.get(nextIdx);
+
+            // Branch A — skip r
+            solStack.push(sol);
+            idxStack.push(nextIdx + 1);
+
+            // Branch B — take r
+            List<Route> newRoutes = new ArrayList<>(sol.routes);
+            newRoutes.add(r);
+            solStack.push(new Solution(newRoutes));
+            idxStack.push(nextIdx + 1);
         }
 
-        sol.objectiveValue();
+        ConstraintChecker checker = new ConstraintChecker(bestSolution);
+        checker.checkAll();
+        if(!checker.isValid()) bestSolution = null;
 
-        return sol;
     }
+
+    public Solution getSolution() { return bestSolution; }
 }

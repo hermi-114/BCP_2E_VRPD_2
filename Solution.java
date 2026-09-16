@@ -3,7 +3,7 @@ import java.util.List;
 
 public class Solution {
     public final List<Route> routes;
-    double objectiveValue;
+    double objectiveValue;        // -1 means "not yet computed"
 
     public Solution() {
         this.routes = new ArrayList<>();
@@ -12,22 +12,34 @@ public class Solution {
 
     public Solution(List<Route> routes) {
         this.routes = routes;
-        objectiveValue = -1;
+        this.objectiveValue = -1;
     }
 
-    public void addRoute(Route route) {
-        this.routes.add(route);
-        if(route.totalTime > objectiveValue) objectiveValue = route.totalTime;
-    }
-
+    /** Sum over routes (matches the paper's objective). */
     public double objectiveValue() {
-        if(objectiveValue != -1) return this.objectiveValue;
+        if (objectiveValue >= 0) return objectiveValue;
 
-        double max = Double.MIN_VALUE;
-        for(Route route : routes) {
-            if(route.totalTime > max) max = route.totalTime;
+        double sum = 0.0;
+        for (Route route : routes) sum += route.totalTime;
+        return objectiveValue = sum;
+    }
+
+    @Override
+    public String toString() {
+        int maxDrones = 0, totalDrones = 0;
+        for (Route r : routes) {
+            maxDrones   = Math.max(maxDrones, r.getNumDrone());
+            totalDrones += r.getNumDrone();
         }
 
-        return objectiveValue = max;
+        StringBuilder sb = new StringBuilder();
+        sb.append("Solution")
+          .append(" | objectiveValue = ").append(objectiveValue())
+          .append(" | trucks used = ").append(routes.size())
+          .append(" | total drones = ").append(totalDrones)
+          .append(" | max drones on a route = ").append(maxDrones)
+          .append("\n");
+        for (Route r : routes) sb.append(r).append("\n");
+        return sb.toString();
     }
 }

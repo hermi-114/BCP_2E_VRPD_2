@@ -37,9 +37,10 @@ public class Main {
         long end_column_gen = System.currentTimeMillis();
 
         BranchAndBound branch = new BranchAndBound();
-        // branch.run();
+        branch.run();
 
-
+        Solution sol = branch.getSolution();
+        System.out.println(sol);
 
         long endTime = System.currentTimeMillis();
 
