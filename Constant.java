@@ -32,6 +32,7 @@ public class Constant {
     public static double AIR_DENSITY = 1.204; // kg/m^3
 
     public static final double EPSILON = 1e-7;
+    public static final double ROUTE_REDUCED_COST_THRESHOLD = -1e-2;
     public static final double M = 1e7 - 1;
 
 }

@@ -19,6 +19,8 @@ public class Main {
 
         VRPInstance.calculateDistance(); // System.out.println(VRPInstance.nodes.get(0).toString());
 
+        VRPInstance.initNgNeighborhoods(Constant.LABEL_MAX_NG_SIZE);
+
         DroneScheduleEnumeration droneSchedulesEnum = new DroneScheduleEnumeration();
         droneSchedulesEnum.solve();
 
@@ -34,6 +36,11 @@ public class Main {
 
         long end_column_gen = System.currentTimeMillis();
 
+        BranchAndBound branch = new BranchAndBound();
+        // branch.run();
+
+
+
         long endTime = System.currentTimeMillis();
 
         if(Config.PRINT_DRONE) {
@@ -47,6 +54,7 @@ public class Main {
         
         System.out.printf("\nDrone Schedules Enumeration: %ds\n", (end_drone_enum - startTime)/1000);
         System.out.printf("Column generation: %ds\n", (end_column_gen - end_drone_enum)/1000);
+        System.out.printf("Branch and bound: %ds\n", (endTime - end_column_gen)/1000);
         
         System.out.printf("\nProgamme runs in %ds\n", (endTime - startTime)/1000);
         

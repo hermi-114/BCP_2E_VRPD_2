@@ -1,4 +1,3 @@
-
 import java.math.BigInteger;
 
 public class Label {
@@ -8,8 +7,11 @@ public class Label {
     public double capacity;
     public double reducedCost;
     public Label predecessor;
-    public BigInteger customerServed;
+    public BigInteger ngSet;
     public int d;
+    public int droneUsed;   // <-- ADD THIS
+
+    public double[] r1cState;
 
     public Label(int node) {
         this.node = node;
@@ -18,7 +20,8 @@ public class Label {
         this.capacity = 0;
         this.reducedCost = 0;
         this.predecessor = null;
-        this.customerServed = BigInteger.ZERO;
+        this.ngSet = BigInteger.ZERO;
         this.d = 0;
+        this.droneUsed = 0;
     }
 }
