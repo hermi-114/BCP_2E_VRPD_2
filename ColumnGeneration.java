@@ -1,184 +1,153 @@
-import java.util.List;
-import java.util.Set;
-import java.util.HashSet;
-import java.util.Arrays;
+import java.math.BigInteger;
+import java.util.*;
 
-import com.gurobi.gurobi.*;
-import java.util.ArrayList;
+import com.gurobi.gurobi.GRBException;
 
 public class ColumnGeneration {
 
     private static final int MAX_CUT_ROUNDS = 5;
 
+    public static class NodeResult {
+        public double       objective;    // forcedCost + LP value
+        public double[]     lambda;       // primal values, same order as columns
+        public List<Route>  columns;      // parallel to lambda
+        public double[]     artificial;   // artificial values (should be ~0)
+        public boolean      feasible;     // false if any artificial > EPS
+    }
+
+    /** Root-only wrapper (backwards compat). */
     public void solve() throws GRBException {
+        NodeResult res = solveForNode(new ArrayList<>(), new HashSet<>());
+        System.out.println("Root LP objective = " + res.objective
+                         + "  feasible = " + res.feasible);
+    }
 
-        MasterProblem   master         = new MasterProblem(Constant.TOTAL_CUSTOMER);
-        CuttingPlanes   cuttingPlanes  = new CuttingPlanes();
-        Set<String> setUsedRoutes = new HashSet<>();
-        PricingProblem  pricing        = new PricingProblem(cuttingPlanes, setUsedRoutes);
-        CutGeneration   cutGeneration  = new CutGeneration();
+    /**
+     * Solve the LP for one B&P node.
+     * @param forcedRoutes  routes already decided to be in the solution
+     * @param forbiddenSigs signatures of routes that must not be used at this node
+     */
+    public NodeResult solveForNode(List<Route> forcedRoutes,
+                                   Set<String> forbiddenSigs) throws GRBException {
 
-        // Only kept to guard against re-adding identical columns (defensive;
-        // pricing already de-duplicates via its own `signatures` set).
+        // ---------- 1. forced state ----------
+        BigInteger forcedCustomers = BigInteger.ZERO;
+        double forcedCost = 0.0;
+        int forcedVehicles = 0, forcedDrones = 0;
+        for (Route r : forcedRoutes) {
+            forcedCustomers = forcedCustomers.or(r.customerServedHashed);
+            forcedCost     += r.totalTime;
+            forcedVehicles += 1;
+            forcedDrones   += r.getNumDrone();
+        }
 
-        int colGen    = 0;
-        int cutRound  = 0;
+        int vehCap   = Constant.MAX_VEHICLE - forcedVehicles;
+        int droneCap = Constant.MAX_DRONE   - forcedDrones;
+        if (vehCap < 0 || droneCap < 0) {
+            NodeResult dead = new NodeResult();
+            dead.feasible = false;
+            dead.objective = Double.POSITIVE_INFINITY;
+            dead.lambda   = new double[0];
+            dead.columns  = new ArrayList<>();
+            dead.artificial = new double[Constant.TOTAL_CUSTOMER];
+            return dead;
+        }
 
-        outer:
-        while (true) {
+        // ---------- 2. fresh master, cuts, pricing ----------
+        MasterProblem master = new MasterProblem(Constant.TOTAL_CUSTOMER);
+        CuttingPlanes cuttingPlanes = new CuttingPlanes();
+        Set<String> signatures = new HashSet<>(forbiddenSigs);
+        PricingProblem pricing = new PricingProblem(cuttingPlanes, signatures);
+        CutGeneration cutGeneration = new CutGeneration();
 
-            // =================================================================
-            // COLUMN GENERATION
-            // =================================================================
-            while (true) {
+        master.setResourceCaps(vehCap, droneCap);
+        master.setUncoveredMask(forcedCustomers);
 
-                colGen++;
-                System.out.println("========== Column Generation Iteration "
-                                   + colGen + " ==========");
-
-                // --- 1. solve master LP ---
-                try {
-                    master.solve();
-                    cuttingPlanes.updateDuals(master);
-                } catch (GRBException e) {
-                    System.err.println("Master LP infeasible: " + e.getMessage());
-                    master.dispose();
-                    return;
-                }
-
-                // --- 2. build the dual vector for pricing ---
-                double[] pi         = master.getDuals();          // length TOTAL_CUSTOMER
-                double dualTruck    = master.getDualVehicle();
-                double dualDrone    = master.getDualDrone();
-
-                // --- 3. run pricing ---
-                pricing.runThreeStagePricing(pi, dualTruck, dualDrone);
-                List<Route> bestRoutes = pricing.getNewRoutes();
-                System.out.println("Pricing returned " + bestRoutes.size()
-                                   + " candidate routes.");
-
-                if (bestRoutes.isEmpty()) {
-                    System.out.println("No candidate routes, column generation converged.");
-                    break;
-                }
-
-                // --- 4. add the negative-reduced-cost ones to the master ---
-                boolean columnsAdded = false;
-                for (Route route : bestRoutes) {
-
-                    if (route.reducedCost >= -Constant.EPSILON) continue;
-
-                    String sig = route.getSignature();
-                    // if (setUsedRoutes.contains(sig)) continue;
-                    setUsedRoutes.add(sig);
-
-                    master.addColumn(route, cuttingPlanes);
-                    VRPInstance.routePool.add(route);
-                    columnsAdded = true;
-                }
-
-                if (!columnsAdded) {
-                    System.out.println("All candidate routes had non-negative reduced cost.");
-                    break;
-                }
-            }
-
-            // =================================================================
-            // COLUMN PRUNING
-            // =================================================================
+        // ---------- 3. column generation ----------
+        int maxColRounds = 200;
+        for (int it = 0; it < maxColRounds; it++) {
             try {
-                int removed = master.pruneColumns(1e-6);
-                if (removed > 0) {
-                    System.out.println("Pruned " + removed + " columns with λ ≈ 0.");
-
-                    // keep pool and signatures consistent
-                    VRPInstance.routePool.clear();
-                    VRPInstance.routePool.addAll(master.getRealRoutes());
-
-
-                    // re-populate cached primal/dual values on the trimmed model
-                    master.solve();
-                    cuttingPlanes.updateDuals(master);
-                }
+                master.solve();
             } catch (GRBException e) {
-                System.err.println("Pruning/re-solve failed: " + e.getMessage());
                 master.dispose();
-                return;
+                NodeResult dead = new NodeResult();
+                dead.feasible = false;
+                dead.objective = Double.POSITIVE_INFINITY;
+                dead.lambda = new double[0];
+                dead.columns = new ArrayList<>();
+                dead.artificial = new double[Constant.TOTAL_CUSTOMER];
+                return dead;
             }
 
-            // =================================================================
-            // ARTIFICIAL VARIABLE CHECK
-            // =================================================================
-            double[] dummyVals = master.artificialValues;
-            boolean hasArtificial = false;
-            if (dummyVals != null) {
-                for (double val : dummyVals) {
-                    if (val > Constant.EPSILON) { hasArtificial = true; break; }
-                }
-            }
+            cuttingPlanes.updateDuals(master);
 
-            if (hasArtificial) {
-                System.out.println("LP still has artificial variables. Stopping.");
-                break outer;
-            }
+            double[] pi = master.getDuals();
+            double dualTruck = master.getDualVehicle();
+            double dualDrone = master.getDualDrone();
 
-            // =================================================================
-            // CUT GENERATION (placeholder)
-            // =================================================================
-            if (cutRound >= MAX_CUT_ROUNDS) {
-                System.out.println("Reached maximum cut rounds ("
-                                   + MAX_CUT_ROUNDS + "). Stopping.");
-                break outer;
-            }
+            pricing.runThreeStagePricing(pi, dualTruck, dualDrone,
+                                         forcedCustomers, forbiddenSigs);
+            List<Route> candidates = pricing.getNewRoutes();
+            if (candidates.isEmpty()) break;
 
+            boolean added = false;
+            int cap = 200;
+            for (Route r : candidates) {
+                if (cap-- <= 0) break;
+                if (r.reducedCost >= -Constant.EPSILON) continue;
+                String sig = r.getSignature();
+                if (signatures.contains(sig)) continue;
+                master.addColumn(r, cuttingPlanes);
+                signatures.add(sig);
+                added = true;
+            }
+            if (!added) break;
+        }
+
+        // ---------- 4. cut generation (bounded) ----------
+        for (int cr = 0; cr < MAX_CUT_ROUNDS; cr++) {
             double[] lambda = master.getPrimes();
             List<ICut> newCuts = cutGeneration.separateCuts(VRPInstance.routePool, lambda);
-
-            if (newCuts.isEmpty()) {
-                System.out.println("No new cuts found. Stopping.");
-                break outer;
-            }
-
+            if (newCuts.isEmpty()) break;
             for (ICut cut : newCuts) {
                 cuttingPlanes.addCut(cut);
                 master.addCut(cut);
             }
-            cutRound++;
-            System.out.println("Added " + newCuts.size() + " cuts. Cut round "
-                               + cutRound + ".");
+            // re-run a short CG round after adding cuts
+            try { master.solve(); } catch (GRBException e) { break; }
+            cuttingPlanes.updateDuals(master);
+            double[] pi = master.getDuals();
+            double dT = master.getDualVehicle();
+            double dD = master.getDualDrone();
+            pricing.runThreeStagePricing(pi, dT, dD, forcedCustomers, forbiddenSigs);
+            List<Route> cand = pricing.getNewRoutes();
+            boolean added = false;
+            for (Route r : cand) {
+                if (r.reducedCost >= -Constant.EPSILON) continue;
+                String sig = r.getSignature();
+                if (signatures.contains(sig)) continue;
+                master.addColumn(r, cuttingPlanes);
+                signatures.add(sig);
+                added = true;
+            }
+            if (!added) continue;
         }
 
-        // =====================================================================
-        // REPORT
-        // =====================================================================
-        double[] dummyVals = master.artificialValues;
-        double[] lambda    = master.getPrimes();
+        // ---------- 5. package result ----------
+        try { master.solve(); } catch (GRBException e) { /* leave as-is */ }
+
+        NodeResult res = new NodeResult();
+        res.lambda     = master.getPrimes();
+        res.columns    = new ArrayList<>(master.getRealRoutes());
+        res.artificial = master.artificialValues;
+        res.objective  = forcedCost + master.getObjectiveValue();
+
+        res.feasible = true;
+        for (double a : res.artificial) {
+            if (a > Constant.EPSILON) { res.feasible = false; break; }
+        }
+
         master.dispose();
-
-        if (dummyVals != null) {
-            for (int i = 0; i < dummyVals.length; i++) {
-                if (dummyVals[i] > Constant.EPSILON) {
-                    System.out.println("Infeasible! Customer " + (i + 1)
-                                       + " is not served (dummy = " + dummyVals[i] + ")");
-                }
-            }
-        }
-        
-        List<Integer> chosen = new ArrayList<>();
-
-        if (lambda != null) {
-            // System.out.println("Final lambda: " + Arrays.toString(lambda));
-            for(int i = 0; i < lambda.length; i++) {
-                if(lambda[i] > 0) chosen.add(i);
-            }
-        }
-
-        System.out.println("Generated " + VRPInstance.routePool.size() + " real routes.");
-
-
-        System.out.println("Select " + chosen.size() + " routes.");
-        for(int id : chosen) {
-            System.out.printf("%.3f  |   %s\n", lambda[id], VRPInstance.routePool.get(id));
-        }
+        return res;
     }
 }
