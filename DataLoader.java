@@ -66,11 +66,14 @@ public class DataLoader {
 
     }
 
-    public static void loadFleet() {
+    public static void loadFleet(String dataset) {
         try(BufferedReader br = new BufferedReader(new FileReader("./data/Solomon/capacities.txt"))) {
             
-            String type = Config.INPUT_TYPE;
-            String set = Config.INPUT_SET;
+            String name = dataset.replace(".txt", "");
+            int idx = 0;
+            while(name.charAt(idx) == 'R' || name.charAt(idx) == 'C') idx++;
+            String type = name.substring(0, idx);
+            String set = name.substring(idx);
             String line;
 
             while((line = br.readLine()) != null) {

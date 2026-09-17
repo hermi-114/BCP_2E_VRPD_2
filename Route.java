@@ -131,5 +131,34 @@ public class Route {
         
         return sb.toString();
     }
+
+    /** Bitmask of customers visited directly by the truck (sequence excludes depot). */
+    public BigInteger truckServedMask() {
+        BigInteger mask = BigInteger.ZERO;
+        for (Node n : sequence) {
+            if (n.id == 0) continue;       // skip depot (appears twice)
+            mask = mask.setBit(n.id);
+        }
+        return mask;
+    }
+
+    /** Bitmask of customers served by any drone schedule attached to this route. */
+    public BigInteger droneServedMask() {
+        BigInteger mask = BigInteger.ZERO;
+        for (DroneSchedule s : customerDroneSchedule.values()) {
+            mask = mask.or(s.customerServedHashed);
+        }
+        return mask;
+    }
+
+    public boolean isTruckVisited(int c) {
+        for (Node n : sequence) if (n.id == c) return true;
+        return false;
+    }
+
+    public boolean isDroneServedFrom(int c, int u) {
+        DroneSchedule s = customerDroneSchedule.get(u);
+        return s != null && s.customerServed.contains(c);
+    }
     
 }

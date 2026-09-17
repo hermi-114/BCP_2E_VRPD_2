@@ -13,6 +13,13 @@ public class VRPInstance {
 
     public static BigInteger[] ngNeighborhood;
 
+    public static void reset() {
+        nodes.clear();
+        routePool.clear();
+        distMatrix = null;
+        ngNeighborhood = null;
+    }
+
     public static void calculateDistance() {
         distMatrix = new double[Constant.TOTAL_CUSTOMER + 1][Constant.TOTAL_CUSTOMER + 1];
 

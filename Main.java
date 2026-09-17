@@ -1,19 +1,64 @@
 import com.gurobi.gurobi.*;
-
+import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;
 import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 public class Main {
+
     public static void main(String[] args) {
 
-        String fileOutName_drone = "drone.txt";
-        String fileOutName_route = "route.txt";
+        String outputFile = "./output/output_5_cus.csv";
+        new File("./output").mkdirs();          // <-- make sure the dir exists
 
-        DataLoader.loadCustomer("./data/Solomon/" + (Config.INPUT_TYPE + Config.INPUT_SET + ".txt"));
-        DataLoader.loadFleet();
+        File folder = new File("./data/Solomon");
+
+        // int fileRun = 2;
+
+        try (PrintWriter out = new PrintWriter(outputFile)) {
+
+            out.println();
+            out.println(",,,SIZE CUSTOMER DATASET = " + Config.SIZE_CUSTOMER_DATASET);
+            out.println();
+            out.println(",,set,obj,total_time(s),drone(s),bcp(s)");
+
+            File[] files = folder.listFiles();
+            if (files != null) {
+                Arrays.sort(files);
+
+                // int run = 0;
+                for (File file : files) {
+                    // if(run >= fileRun) break;
+
+                    if (!file.isFile()) continue;
+                    if (!file.getName().endsWith(".txt")) continue;
+                    if (file.getName().equals("capacities.txt")) continue;
+
+                    System.out.println("Running " + file.getName());
+                    try {
+                        runSingle(file.getName(), out);
+                        // run++;
+                    } catch (Exception e) {
+                        System.err.println("FAILED on " + file.getName());
+                        e.printStackTrace();
+                        out.println(file.getName() + ",FAILED,-1,-1,-1");
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void runSingle(String dataset, PrintWriter out) {
+        VRPInstance.reset();
+        DroneScheduleEnumeration.paretoMap.clear();
+
+        DataLoader.loadCustomer("./data/Solomon/" + dataset);
+        DataLoader.loadFleet(dataset);
+        Constant.initDerivedValues();
 
         long startTime = System.currentTimeMillis();
 
@@ -25,43 +70,33 @@ public class Main {
 
         long end_drone_enum = System.currentTimeMillis();
 
-        // -------- Column generation (root only, to seed the route pool) --------
-        ColumnGeneration columnGeneration = new ColumnGeneration();
-        try {
-            columnGeneration.solve();
-        } catch (GRBException e) {
-            e.printStackTrace();
-        }
-
-        long end_column_gen = System.currentTimeMillis();
-
-        // -------- Branch-and-price --------
         BranchAndPrice bap = new BranchAndPrice();
-        try {
-            bap.run();
-        } catch (GRBException e) {
-            e.printStackTrace();
-        }
+        try { bap.run(); } catch (GRBException e) { e.printStackTrace(); }
 
         long end_bap = System.currentTimeMillis();
+
+        double time_drone  = (end_drone_enum - startTime) / 1000.0;
+        double time_branch = (end_bap - end_drone_enum) / 1000.0;
+        double time_whole  = (end_bap - startTime) / 1000.0;
 
         System.out.println("=================== Best solution ===================");
         if (bap.getBestSolution() == null) {
             System.out.println("(no integer solution found)");
+            out.println(dataset + ",NO_SOL," + time_whole + ","
+                      + time_drone + "," + time_branch);
         } else {
             for (Route r : bap.getBestSolution()) System.out.println(r);
             System.out.println("Objective = " + bap.getBestObjective());
+            out.println(",," + dataset + "," + bap.getBestObjective() + ","
+                      + time_whole + "," + time_drone + "," + time_branch);
         }
 
-        if (Config.PRINT_DRONE) printParetoFront("./output/" + fileOutName_drone);
-        if (Config.PRINT_ROUTE) printRoutePool("./output/" + fileOutName_route);
-
-        System.out.printf("\nDrone Schedules Enumeration: %ds\n", (end_drone_enum - startTime) / 1000);
-        System.out.printf("Column generation:          %ds\n", (end_column_gen - end_drone_enum) / 1000);
-        System.out.printf("Branch and price:           %ds\n", (end_bap - end_column_gen) / 1000);
-        System.out.printf("\nProgramme runs in %ds\n", (end_bap - startTime) / 1000);
+        System.out.printf("\nDrone Schedules Enumeration: %.1fs\n", time_drone);
+        System.out.printf("Branch and price:           %.1fs\n", time_branch);
+        System.out.printf("\nProgramme runs in %.1fs\n", time_whole);
     }
 
+    // ----- these stay as they are -----
     public static void printRoutePool(String fileName) {
         try (PrintWriter out = new PrintWriter(fileName)) {
             for (Route r : VRPInstance.routePool) out.println(r);

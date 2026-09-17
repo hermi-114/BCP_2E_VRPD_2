@@ -49,7 +49,8 @@ public class MasterProblem {
     }
 
     private void initializeArtificialColumns(int totalCustomer) throws GRBException {
-        final double M = 9999.0;
+        // Lower than 9999 to keep the LP numerically stable relative to route costs.
+        final double M = 1000.0;
         for (int i = 0; i < totalCustomer; i++) {
             GRBColumn col = new GRBColumn();
             col.addTerm(1, coverConstr[i]);
@@ -59,19 +60,12 @@ public class MasterProblem {
         model.update();
     }
 
-    /** Reduce the RHS of the two resource constraints (for branch-and-price). */
     public void setResourceCaps(int vehCap, int droneCap) throws GRBException {
         truckConstr.set(GRB.DoubleAttr.RHS, vehCap);
         droneConstr.set(GRB.DoubleAttr.RHS, droneCap);
         model.update();
     }
 
-    /**
-     * For every customer in `forcedCustomers`, replace the coverage row
-     * `Σ λ_r + a_c = 1` with `Σ λ_r + a_c ≤ 0`. This forces both real
-     * columns and the artificial to be zero on that customer, which is
-     * exactly what we want: the customer is already served by a forced route.
-     */
     public void setUncoveredMask(BigInteger forcedCustomers) throws GRBException {
         for (int i = 0; i < coverConstr.length; i++) {
             if (forcedCustomers.testBit(i + 1)) {
@@ -82,7 +76,14 @@ public class MasterProblem {
         model.update();
     }
 
+    private final java.util.Set<String> columnSignatures = new java.util.HashSet<>();
+
     public void addColumn(Route route, CuttingPlanes cuttingPlanes) throws GRBException {
+        // guard against duplicate columns
+        String sig = route.getSignature();
+        if (columnSignatures.contains(sig)) return;
+        columnSignatures.add(sig);
+
         double cost = route.totalTime;
         GRBColumn col = new GRBColumn();
 
@@ -93,20 +94,27 @@ public class MasterProblem {
         col.addTerm(1, truckConstr);
         col.addTerm(route.getNumDrone(), droneConstr);
 
-        List<ICut> cuts = cuttingPlanes.cuts;
-        for (int i = 0; i < cuts.size(); i++) {
-            double coef = cuts.get(i).getCoefficientForRoute(route);
-            if (Math.abs(coef) > Constant.EPSILON) col.addTerm(coef, cutsConstr.get(i));
+        if (cuttingPlanes != null && cuttingPlanes.cuts != null) {
+            List<ICut> cuts = cuttingPlanes.cuts;
+            for (int i = 0; i < cuts.size(); i++) {
+                double coef = cuts.get(i).getCoefficientForRoute(route);
+                if (Math.abs(coef) > Constant.EPSILON)
+                    col.addTerm(coef, cutsConstr.get(i));
+            }
         }
 
         GRBVar realVar = model.addVar(0, 1, cost, GRB.CONTINUOUS, col,
-                                      "real_" + realVars.size());
+                                    "real_" + realVars.size());
         realVars.add(realVar);
         realVarRoutes.add(route);
         model.update();
     }
 
-    public void addCut(ICut cut) throws GRBException {
+    /**
+     * Adds a cut and returns the Gurobi constraint so the caller can roll
+     * it back if the subsequent re-solve becomes infeasible.
+     */
+    public GRBConstr addCutAndReturn(ICut cut) throws GRBException {
         GRBLinExpr lhs = new GRBLinExpr();
         char sense = (cut instanceof ARCCut) ? GRB.GREATER_EQUAL
                   : (cut instanceof R1Cut)  ? GRB.LESS_EQUAL
@@ -122,6 +130,19 @@ public class MasterProblem {
             if (Math.abs(coef) > Constant.EPSILON)
                 model.chgCoeff(constr, realVars.get(i), coef);
         }
+        model.update();
+        return constr;
+    }
+
+    /** Backwards-compatible: adds a cut and discards the handle. */
+    public void addCut(ICut cut) throws GRBException {
+        addCutAndReturn(cut);
+    }
+
+    /** Removes a cut constraint from the model and from cutsConstr. */
+    public void removeConstraint(GRBConstr c) throws GRBException {
+        model.remove(c);
+        cutsConstr.remove(c);
         model.update();
     }
 
@@ -174,5 +195,66 @@ public class MasterProblem {
     public void dispose() throws GRBException {
         model.dispose();
         env.dispose();
+    }
+
+    public boolean addAllAndSolveMip(List<List<Route>> enumeratedByD) throws GRBException {
+        
+        if (enumeratedByD == null) return false;
+
+        // 1. add all columns (addColumn now deduplicates internally)
+        int before = realVars.size();
+        for (List<Route> byD : enumeratedByD) {
+            if (byD == null) continue;
+            for (Route r : byD) addColumn(r, null);
+        }
+        int added = realVars.size() - before;
+        System.out.println("    [MIP] added " + added + " new columns, total = " + realVars.size());
+
+        // 2. switch to MIP
+        setInteger(true);
+        model.set(GRB.DoubleParam.MIPGap, 1e-4);
+        model.set(GRB.IntParam.Threads,
+                Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
+
+        // 3. solve as MIP
+        model.set(GRB.IntParam.Method, -1);   // auto-select MIP method
+        model.optimize();
+
+        int status = model.get(GRB.IntAttr.Status);
+        int sols   = model.get(GRB.IntAttr.SolCount);
+        System.out.printf("    [MIP] status=%d sols=%d gap=%.2e obj=%.6f%n",
+        status, sols,
+        sols > 0 ? model.get(GRB.DoubleAttr.MIPGap) : Double.NaN,
+        sols > 0 ? model.get(GRB.DoubleAttr.ObjVal) : Double.NaN);
+
+        // 4. cache the objective/artificial values so getters work
+        if (sols > 0
+                && (status == GRB.Status.OPTIMAL
+                || status == GRB.Status.SUBOPTIMAL
+                || status == GRB.Status.TIME_LIMIT
+                || status == GRB.Status.INTERRUPTED)) {
+            objectiveValue   = model.get(GRB.DoubleAttr.ObjVal);
+            artificialValues = extractArtificialVariableValues();
+            return true;
+        }
+        return false;
+    }
+
+    public void setInteger(boolean asInteger) throws GRBException {
+        char type = asInteger ? GRB.BINARY : GRB.CONTINUOUS;
+        for (GRBVar v : realVars)     v.set(GRB.CharAttr.VType, type);
+        for (GRBVar v : artificialVars) v.set(GRB.CharAttr.VType, type);
+    }
+
+    public void setMipGapTolerance(double gap) throws GRBException {
+        model.set(GRB.DoubleParam.MIPGap, gap);
+    }
+
+    public boolean hasIntegerSolution() throws GRBException {
+        int status = model.get(GRB.IntAttr.Status);
+        if (status != GRB.Status.OPTIMAL && status != GRB.Status.SUBOPTIMAL
+                && status != GRB.Status.TIME_LIMIT && status != GRB.Status.INTERRUPTED)
+            return false;
+        return model.get(GRB.IntAttr.SolCount) > 0;
     }
 }
