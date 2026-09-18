@@ -9,47 +9,60 @@ public class Main {
 
     public static void main(String[] args) {
 
-        String outputFile = "./output/output_5_cus.csv";
+        boolean checkRoute = true;
+
+        String set = "C102";
+        String inputFile = set + ".txt";
+        String outputFile = "./output/output.csv";
+        // String outputFile = "./output/output_" + Config.SIZE_CUSTOMER_DATASET + "_aut.csv";
         new File("./output").mkdirs();          // <-- make sure the dir exists
 
-        File folder = new File("./data/Solomon");
-
-        // int fileRun = 2;
-
-        try (PrintWriter out = new PrintWriter(outputFile)) {
-
+        
+        try(PrintWriter out = new PrintWriter(outputFile)) {
             out.println();
             out.println(",,,SIZE CUSTOMER DATASET = " + Config.SIZE_CUSTOMER_DATASET);
             out.println();
             out.println(",,set,obj,total_time(s),drone(s),bcp(s)");
 
-            File[] files = folder.listFiles();
-            if (files != null) {
-                Arrays.sort(files);
+            runSingle(inputFile, out);
+            // runAll(out);
 
-                // int run = 0;
-                for (File file : files) {
-                    // if(run >= fileRun) break;
-
-                    if (!file.isFile()) continue;
-                    if (!file.getName().endsWith(".txt")) continue;
-                    if (file.getName().equals("capacities.txt")) continue;
-
-                    System.out.println("Running " + file.getName());
-                    try {
-                        runSingle(file.getName(), out);
-                        // run++;
-                    } catch (Exception e) {
-                        System.err.println("FAILED on " + file.getName());
-                        e.printStackTrace();
-                        out.println(file.getName() + ",FAILED,-1,-1,-1");
-                    }
-                }
-            }
+            if(checkRoute) printRoutePool("./output/route.txt");
+            
 
         } catch (Exception e) {
             e.printStackTrace();
         }
+
+    }
+    
+    public static void runAll(PrintWriter out) throws Exception {
+    
+        File folder = new File("./data/Solomon");
+    
+    
+        File[] files = folder.listFiles();
+        if (files != null) {
+            Arrays.sort(files);
+    
+            for (File file : files) {    
+                if (!file.isFile()) continue;
+                if (!file.getName().endsWith(".txt")) continue;
+                if (file.getName().equals("capacities.txt")) continue;
+
+                System.out.println("Running " + file.getName());
+                try {
+                    runSingle(file.getName(), out);
+                    // run++;
+                } catch (Exception e) {
+                    System.err.println("FAILED on " + file.getName());
+                    e.printStackTrace();
+                    out.println(file.getName() + ",FAILED,-1,-1,-1");
+                }
+            }
+        }
+    
+
     }
 
     public static void runSingle(String dataset, PrintWriter out) {

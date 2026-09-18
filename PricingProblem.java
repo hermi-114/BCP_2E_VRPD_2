@@ -21,17 +21,14 @@ public class PricingProblem {
     private BigInteger blockedCustomers = BigInteger.ZERO;
     private Set<String> forbiddenSigs   = new HashSet<>();
 
-    // ---- customer-based branching state ----
-    private BigInteger forcedTruck = BigInteger.ZERO;
-    private BigInteger forcedDrone = BigInteger.ZERO;
-    private Map<Integer,Integer> droneFromNode = new HashMap<>();
+    // ---- branch state (from BCPNode) ----
+    private final Set<Long> bannedArcs   = new HashSet<>();   // arcs forbidden by branch
+    private long            requiredArc  = -1;                // arc (i,j) forced by branch, or -1
 
-    // ---- bucket-arc elimination ----
-    private final Set<Long> bannedArcs = new HashSet<>();
+    // ---- bucked-arc elimination ----
     private int cgIteration = 0;
 
     // ---- route enumeration (Baldacci 2008) ----
-    // enumeratedByD[d] = all routes of exactly-d-drone type with reduced cost < 0
     private List<List<Route>> enumeratedByD = null;
     private int               enumeratedTotalCount = 0;
     private boolean           enumerationComplete  = false;
@@ -40,9 +37,7 @@ public class PricingProblem {
     static final int NUM_D      = Constant.MAX_DRONE_PER_VEHICLE + 1;
     static final int NUM_BUCKET = Config.SIZE_BUCKET;
 
-    double timeOrigin;
-    double timeStep;
-    double capaStep;
+    double timeOrigin, timeStep, capaStep;
 
     public PricingProblem(CuttingPlanes cuttingPlanes, Set<String> usedRoutes) {
         this.cuttingPlanes = cuttingPlanes;
@@ -52,9 +47,7 @@ public class PricingProblem {
         allocateBuckets();
     }
 
-    private static class RCSPGraph {
-        List<List<RCSPArc>> adjacencyList = new ArrayList<>();
-    }
+    private static class RCSPGraph { List<List<RCSPArc>> adjacencyList = new ArrayList<>(); }
 
     private void initNgNeighborhoods() {
         if (VRPInstance.ngNeighborhood != null) {
@@ -91,65 +84,59 @@ public class PricingProblem {
                         buckets[d][v][i][j] = new ArrayList<>();
     }
 
-    // ------------------------------------------------------------------
-    //  External setter for the current CG iteration (for arc elimination)
-    // ------------------------------------------------------------------
     public void setCgIteration(int it) { this.cgIteration = it; }
 
     // ------------------------------------------------------------------
-    //  Entry point
+    //  Entry point — called from ColumnGeneration.solveForNode
     // ------------------------------------------------------------------
     public void runThreeStagePricing(double[] pi,
                                      double dualTruck,
                                      double dualDrone,
                                      BigInteger blockedCustomers,
                                      Set<String> forbiddenSigs,
-                                     BigInteger forcedTruck,
-                                     BigInteger forcedDrone,
-                                     Map<Integer,Integer> droneFromNode) {
+                                     List<BranchDecision> decisions,
+                                     boolean allowEnumeration) {
 
         this.blockedCustomers = blockedCustomers;
         this.forbiddenSigs    = forbiddenSigs;
-        this.forcedTruck      = (forcedTruck == null) ? BigInteger.ZERO : forcedTruck;
-        this.forcedDrone      = (forcedDrone == null) ? BigInteger.ZERO : forcedDrone;
-        this.droneFromNode    = (droneFromNode == null) ? Collections.emptyMap() : droneFromNode;
+        this.bannedArcs.clear();
+        this.requiredArc = -1;
+        if (decisions != null) {
+            for (BranchDecision d : decisions) {
+                if (d.candidate.type != BranchCandidate.Type.TRUCK_ARC) continue;
+                long key = arcKey(d.candidate.arcI, d.candidate.arcJ);
+                if (d.upperBound) bannedArcs.add(key);
+                else              requiredArc = key;
+            }
+        }
 
         newRoutes.clear();
         activeR1Cuts.clear();
         for (ICut cut : cuttingPlanes.cuts)
             if (cut instanceof R1Cut r) activeR1Cuts.add(r);
 
-        // -------------- Route enumeration shortcut --------------
         if (enumerationComplete) {
             inspectEnumeratedRoutes(pi, dualTruck, dualDrone);
             return;
         }
 
-        // -------------- Normal three-stage pricing --------------
         buildGraphs(pi);
-
-        solveRCSP(dualTruck, dualDrone, PricingStage.LIGHT,
-                  Constant.MAX_COLUMNS_LIGHT);
-
+        solveRCSP(dualTruck, dualDrone, PricingStage.LIGHT,     Constant.MAX_COLUMNS_LIGHT);
         if (newRoutes.size() < Constant.MAX_COLUMNS_LIGHT) {
-            solveRCSP(dualTruck, dualDrone, PricingStage.HEURISTIC,
-                      Constant.MAX_COLUMNS_HEURISTIC);
-
-            if (newRoutes.size() < Constant.MAX_COLUMNS_LIGHT
-                                       + Constant.MAX_COLUMNS_HEURISTIC) {
-                solveRCSP(dualTruck, dualDrone, PricingStage.EXACT,
-                          Constant.MAX_COLUMNS_EXACT);
+            solveRCSP(dualTruck, dualDrone, PricingStage.HEURISTIC, Constant.MAX_COLUMNS_HEURISTIC);
+            if (newRoutes.size() < Constant.MAX_COLUMNS_LIGHT + Constant.MAX_COLUMNS_HEURISTIC) {
+                solveRCSP(dualTruck, dualDrone, PricingStage.EXACT,     Constant.MAX_COLUMNS_EXACT);
             }
         }
 
-        // -------------- Try route enumeration --------------
-        tryRouteEnumeration(pi, dualTruck, dualDrone);
+        if (allowEnumeration) tryRouteEnumeration(pi, dualTruck, dualDrone);
     }
 
+    /** Compatibility overload (no branch decisions). */
     public void runThreeStagePricing(double[] pi, double dualTruck, double dualDrone) {
         runThreeStagePricing(pi, dualTruck, dualDrone,
                              BigInteger.ZERO, new HashSet<>(),
-                             BigInteger.ZERO, BigInteger.ZERO, Collections.emptyMap());
+                             Collections.emptyList(), false);
     }
 
     // ------------------------------------------------------------------
@@ -158,8 +145,7 @@ public class PricingProblem {
     private void solveRCSP(double dualTruck, double dualDrone,
                            PricingStage stage, int columnBudget) {
 
-        int alreadyFound = newRoutes.size();
-        int targetTotal  = alreadyFound + columnBudget;
+        int targetTotal = newRoutes.size() + columnBudget;
 
         for (int d = 0; d < NUM_D; d++)
             for (int v = 0; v < NUM_NODES; v++)
@@ -187,7 +173,7 @@ public class PricingProblem {
                 Label label = queue.poll();
 
                 if (label.node == 0) {
-                    if (satisfiesBranchAtSink(label) && label.reducedCost < 0) {
+                    if (satisfiesRequiredArc(label) && label.reducedCost < 0) {
                         Route route = reconstructRoute(label);
                         route.reducedCost = label.reducedCost
                                           - dualTruck
@@ -205,12 +191,17 @@ public class PricingProblem {
 
                 for (RCSPArc arc : graph.adjacencyList.get(label.node)) {
                     if (isArcBanned(arc)) continue;
-                    Label newLabel = extendLabel(label, arc, d);
-                    if (newLabel == null) continue;
-                    if (addLabelToBucket(newLabel, d, stage)) queue.add(newLabel);
+                    Label nl = extendLabel(label, arc, d);
+                    if (nl == null) continue;
+                    if (addLabelToBucket(nl, d, stage)) queue.add(nl);
                 }
             }
         }
+    }
+
+    private boolean satisfiesRequiredArc(Label label) {
+        if (requiredArc == -1) return true;
+        return label.requiredArcUsed;
     }
 
     private boolean isArcBanned(RCSPArc arc) {
@@ -223,7 +214,7 @@ public class PricingProblem {
     }
 
     // ------------------------------------------------------------------
-    //  Extension + branch enforcement (unchanged from earlier rewrite)
+    //  Extension
     // ------------------------------------------------------------------
     private Label extendLabel(Label label, RCSPArc arc, int d) {
         int dst     = arc.dst;
@@ -233,25 +224,16 @@ public class PricingProblem {
         for (int cust : arc.servedCustomersInOrder)
             if (blockedCustomers.testBit(cust)) return null;
 
-        boolean isRealDroneArc = (arc.schedule != null && !arc.servedCustomersInOrder.isEmpty());
-        boolean isTruckVisit   = (arc.schedule == null && !arc.servedCustomersInOrder.isEmpty());
-
-        BigInteger newTruckBit = label.truckBit;
-        BigInteger newDroneBit = label.droneBit;
-
-        if (isTruckVisit) {
-            for (int c : arc.servedCustomersInOrder) {
-                if (forcedDrone.testBit(c)) return null;
-                if (droneFromNode.containsKey(c)) return null;
-                newTruckBit = newTruckBit.setBit(c);
-            }
-        } else if (isRealDroneArc) {
-            int launchNode = arc.src;
-            for (int c : arc.servedCustomersInOrder) {
-                if (forcedTruck.testBit(c)) return null;
-                Integer requiredU = droneFromNode.get(c);
-                if (requiredU != null && requiredU != launchNode) return null;
-                newDroneBit = newDroneBit.setBit(c);
+        // track the required arc if there is one
+        boolean newRequiredUsed = label.requiredArcUsed;
+        if (requiredArc != -1 && !newRequiredUsed) {
+            // truck arc must be consecutive on the truck path; the "layer‑1" node is
+            // a customer and its successor on the path must be the same index in layer 1
+            int src = arc.src, dstOrig = arc.dst;
+            int srcOrig = src % (Constant.TOTAL_CUSTOMER + 1);
+            if (srcOrig == (int)(requiredArc >>> 32)
+                    && dstOrig == (int)(requiredArc & 0xFFFFFFFFL)) {
+                newRequiredUsed = true;
             }
         }
 
@@ -283,7 +265,8 @@ public class PricingProblem {
         if (newCapacity > Constant.TRUCK_PAYLOAD + Constant.EPSILON) return null;
 
         int newDroneUsed = label.droneUsed;
-        if (isRealDroneArc) newDroneUsed = Math.max(newDroneUsed, d);
+        if (arc.schedule != null && !arc.servedCustomersInOrder.isEmpty())
+            newDroneUsed = Math.max(newDroneUsed, d);
 
         double[] newState = label.r1cState.clone();
         double extraPenalty = 0.0;
@@ -300,37 +283,22 @@ public class PricingProblem {
         double newReducedCost = label.reducedCost + arc.reducedCost + extraPenalty;
 
         Label nl = new Label(arc.dst);
-        nl.arc            = arc;
-        nl.duration       = newDuration;
-        nl.capacity       = newCapacity;
-        nl.reducedCost    = newReducedCost;
-        nl.predecessor    = label;
-        nl.ngSet          = newNgSet;
-        nl.customerServed = newCustomerServed;
-        nl.truckBit       = newTruckBit;
-        nl.droneBit       = newDroneBit;
-        nl.d             = d;
-        nl.droneUsed     = newDroneUsed;
-        nl.r1cState      = newState;
+        nl.arc              = arc;
+        nl.duration         = newDuration;
+        nl.capacity         = newCapacity;
+        nl.reducedCost      = newReducedCost;
+        nl.predecessor      = label;
+        nl.ngSet            = newNgSet;
+        nl.customerServed   = newCustomerServed;
+        nl.requiredArcUsed  = newRequiredUsed;
+        nl.d               = d;
+        nl.droneUsed       = newDroneUsed;
+        nl.r1cState        = newState;
         return nl;
     }
 
-    private boolean satisfiesBranchAtSink(Label label) {
-        if (!label.truckBit.and(forcedTruck).equals(forcedTruck)) return false;
-        if (!label.droneBit.and(forcedDrone).equals(forcedDrone)) return false;
-
-        for (Map.Entry<Integer,Integer> e : droneFromNode.entrySet()) {
-            int c = e.getKey();
-            int u = e.getValue();
-            if (label.truckBit.testBit(c)) return false;
-            if (!label.droneBit.testBit(c)) return false;
-            if (u != 0 && !label.truckBit.testBit(u)) return false;
-        }
-        return true;
-    }
-
     // ------------------------------------------------------------------
-    //  Bucket management (unchanged; dominance includes branch state)
+    //  Bucket management
     // ------------------------------------------------------------------
     private boolean addLabelToBucket(Label newLabel, int d, PricingStage stage) {
         int v  = newLabel.node;
@@ -379,9 +347,7 @@ public class PricingProblem {
             for (int j = 0; j <= Bc; j++) {
                 if (i == Bd && j == Bc) continue;
                 Label best = dominatingLabels[d][v][i][j];
-                if (best != null
-                        && best.reducedCost > newLabel.reducedCost + Constant.EPSILON)
-                    continue;
+                if (best != null && best.reducedCost > newLabel.reducedCost + Constant.EPSILON) continue;
                 for (Label label : buckets[d][v][i][j])
                     if (isDominates(label, newLabel, checkNgAndCuts)) return false;
             }
@@ -400,11 +366,10 @@ public class PricingProblem {
         if (a.duration > b.duration + Constant.EPSILON) return false;
         if (a.capacity > b.capacity + Constant.EPSILON) return false;
         if (a.droneUsed > b.droneUsed) return false;
+        if (a.requiredArcUsed != b.requiredArcUsed) return false;
         if (checkNgAndCuts) {
             if (!b.customerServed.and(a.customerServed).equals(a.customerServed)) return false;
             if (!b.ngSet.and(a.ngSet).equals(a.ngSet)) return false;
-            if (!b.truckBit.and(a.truckBit).equals(a.truckBit)) return false;
-            if (!b.droneBit.and(a.droneBit).equals(a.droneBit)) return false;
             for (int c = 0; c < a.r1cState.length; c++)
                 if (a.r1cState[c] > b.r1cState[c] + Constant.EPSILON) return false;
         }
@@ -502,35 +467,25 @@ public class PricingProblem {
     }
 
     // ------------------------------------------------------------------
-    //  Route enumeration (Baldacci 2008)
+    //  Route enumeration
     // ------------------------------------------------------------------
-    /**
-     * Runs the exact RCSP without a column budget to collect ALL elementary
-     * routes with reduced cost < 0. If the total across all d stays under
-     * ROUTE_ENUM_THRESHOLD, we keep them and mark enumeration complete.
-     * Otherwise we abandon enumeration and fall back to on-demand pricing.
-     */
     private void tryRouteEnumeration(double[] pi, double dualTruck, double dualDrone) {
         if (enumerationComplete) return;
 
         List<List<Route>> byD = new ArrayList<>();
         int total = 0;
-
         int sizeV = Constant.TOTAL_CUSTOMER + 1;
 
         for (int d = 0; d < NUM_D; d++) {
             List<Route> routesD = new ArrayList<>();
             RCSPGraph graph = graphs.get(d);
             Deque<Label> queue = new ArrayDeque<>();
-
-            // clear buckets
             for (int v = 0; v < NUM_NODES; v++)
                 for (int i = 0; i < NUM_BUCKET; i++)
                     for (int j = 0; j < NUM_BUCKET; j++) {
                         buckets[d][v][i][j].clear();
                         dominatingLabels[d][v][i][j] = null;
                     }
-
             Label srcLabel = new Label(sizeV);
             srcLabel.ngSet     = BigInteger.ZERO;
             srcLabel.d         = d;
@@ -541,7 +496,7 @@ public class PricingProblem {
             while (!queue.isEmpty()) {
                 Label label = queue.poll();
                 if (label.node == 0) {
-                    if (satisfiesBranchAtSink(label) && label.reducedCost < -Constant.EPSILON) {
+                    if (satisfiesRequiredArc(label) && label.reducedCost < -Constant.EPSILON) {
                         Route route = reconstructRoute(label);
                         route.reducedCost = label.reducedCost
                                           - dualTruck
@@ -550,9 +505,9 @@ public class PricingProblem {
                             routesD.add(route);
                             total++;
                             if (total > Constant.ROUTE_ENUM_HARD_CAP) {
-                                enumerationComplete = false;
                                 enumeratedByD = null;
-                                return;   // give up
+                                enumerationComplete = false;
+                                return;
                             }
                         }
                     }
@@ -565,17 +520,16 @@ public class PricingProblem {
                     if (addLabelToBucket(nl, d, PricingStage.EXACT)) queue.add(nl);
                 }
             }
-
             byD.add(routesD);
         }
 
         if (total <= Constant.ROUTE_ENUM_THRESHOLD) {
-            this.enumeratedByD         = byD;
-            this.enumeratedTotalCount  = total;
-            this.enumerationComplete   = true;
+            this.enumeratedByD        = byD;
+            this.enumeratedTotalCount = total;
+            this.enumerationComplete  = true;
             System.out.println("    [ENUM] enumerated " + total
-                             + " improving routes (<= "
-                             + Constant.ROUTE_ENUM_THRESHOLD + ") → pricing by inspection.");
+                             + " improving routes (<= " + Constant.ROUTE_ENUM_THRESHOLD
+                             + ") → pricing by inspection.");
         } else {
             this.enumeratedByD        = null;
             this.enumeratedTotalCount = 0;
@@ -585,37 +539,26 @@ public class PricingProblem {
         }
     }
 
-    /**
-     * When enumeration succeeded, pricing is just a filter over the stored routes.
-     * Only routes whose reduced cost is still negative under the *current* duals
-     * are returned.
-     */
     private void inspectEnumeratedRoutes(double[] pi, double dualTruck, double dualDrone) {
         for (List<Route> routesD : enumeratedByD) {
             for (Route r : routesD) {
                 double rc = computeReducedCost(r, pi, dualTruck, dualDrone);
-                if (rc < -Constant.EPSILON) {
-                    r.reducedCost = rc;
-                    newRoutes.add(r);
-                }
+                if (rc < -Constant.EPSILON) { r.reducedCost = rc; newRoutes.add(r); }
             }
         }
     }
 
     private double computeReducedCost(Route r, double[] pi,
                                       double dualTruck, double dualDrone) {
-        // c_r = totalTime(r) - Σ pi_i - dualTruck - numDrones * dualDrone
         double rc = r.totalTime;
-        // subtract Σ pi over served customers
-        List<Integer> served = new ArrayList<>(r.customerServed);
-        for (int c : served) rc -= pi[c - 1];
+        for (int c : r.customerServed) rc -= pi[c - 1];
         rc -= dualTruck;
         rc -= r.getNumDrone() * dualDrone;
         return rc;
     }
 
-    public boolean isEnumerationComplete() { return enumerationComplete; }
-    public int     getEnumeratedTotalCount() { return enumeratedTotalCount; }
+    public boolean isEnumerationComplete()    { return enumerationComplete; }
+    public int     getEnumeratedTotalCount()  { return enumeratedTotalCount; }
     public List<List<Route>> getEnumeratedByD() { return enumeratedByD; }
 
     public List<Route> getNewRoutes() { return newRoutes; }

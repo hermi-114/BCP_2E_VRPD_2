@@ -87,19 +87,29 @@ public class MasterProblem {
         double cost = route.totalTime;
         GRBColumn col = new GRBColumn();
 
+        // coverage
         for (int customer : route.customerServed) {
             if (customer == 0 || customer > Constant.TOTAL_CUSTOMER) continue;
             col.addTerm(1, coverConstr[customer - 1]);
         }
-        col.addTerm(1, truckConstr);
+        // resource caps
+        col.addTerm(1,                  truckConstr);
         col.addTerm(route.getNumDrone(), droneConstr);
 
+        // cuts
         if (cuttingPlanes != null && cuttingPlanes.cuts != null) {
-            List<ICut> cuts = cuttingPlanes.cuts;
-            for (int i = 0; i < cuts.size(); i++) {
-                double coef = cuts.get(i).getCoefficientForRoute(route);
+            for (int i = 0; i < cuttingPlanes.cuts.size(); i++) {
+                double coef = cuttingPlanes.cuts.get(i).getCoefficientForRoute(route);
                 if (Math.abs(coef) > Constant.EPSILON)
                     col.addTerm(coef, cutsConstr.get(i));
+            }
+        }
+
+        // ---- FIX: branch row coefficients go into the column BEFORE the var exists ----
+        for (BranchRowHandle h : branchRows) {
+            double coef = h.dec.candidate.coefficient(route);
+            if (Math.abs(coef) > Constant.EPSILON) {
+                col.addTerm(coef, h.constr);
             }
         }
 
@@ -197,49 +207,6 @@ public class MasterProblem {
         env.dispose();
     }
 
-    public boolean addAllAndSolveMip(List<List<Route>> enumeratedByD) throws GRBException {
-        
-        if (enumeratedByD == null) return false;
-
-        // 1. add all columns (addColumn now deduplicates internally)
-        int before = realVars.size();
-        for (List<Route> byD : enumeratedByD) {
-            if (byD == null) continue;
-            for (Route r : byD) addColumn(r, null);
-        }
-        int added = realVars.size() - before;
-        System.out.println("    [MIP] added " + added + " new columns, total = " + realVars.size());
-
-        // 2. switch to MIP
-        setInteger(true);
-        model.set(GRB.DoubleParam.MIPGap, 1e-4);
-        model.set(GRB.IntParam.Threads,
-                Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
-
-        // 3. solve as MIP
-        model.set(GRB.IntParam.Method, -1);   // auto-select MIP method
-        model.optimize();
-
-        int status = model.get(GRB.IntAttr.Status);
-        int sols   = model.get(GRB.IntAttr.SolCount);
-        System.out.printf("    [MIP] status=%d sols=%d gap=%.2e obj=%.6f%n",
-        status, sols,
-        sols > 0 ? model.get(GRB.DoubleAttr.MIPGap) : Double.NaN,
-        sols > 0 ? model.get(GRB.DoubleAttr.ObjVal) : Double.NaN);
-
-        // 4. cache the objective/artificial values so getters work
-        if (sols > 0
-                && (status == GRB.Status.OPTIMAL
-                || status == GRB.Status.SUBOPTIMAL
-                || status == GRB.Status.TIME_LIMIT
-                || status == GRB.Status.INTERRUPTED)) {
-            objectiveValue   = model.get(GRB.DoubleAttr.ObjVal);
-            artificialValues = extractArtificialVariableValues();
-            return true;
-        }
-        return false;
-    }
-
     public void setInteger(boolean asInteger) throws GRBException {
         char type = asInteger ? GRB.BINARY : GRB.CONTINUOUS;
         for (GRBVar v : realVars)     v.set(GRB.CharAttr.VType, type);
@@ -256,5 +223,118 @@ public class MasterProblem {
                 && status != GRB.Status.TIME_LIMIT && status != GRB.Status.INTERRUPTED)
             return false;
         return model.get(GRB.IntAttr.SolCount) > 0;
+    }
+
+    public GRBConstr addTempRow(double[] coefs, char sense, double rhs) throws GRBException {
+        GRBLinExpr expr = new GRBLinExpr();
+        for (int i = 0; i < realVars.size(); i++) {
+            if (Math.abs(coefs[i]) > Constant.EPSILON)
+                expr.addTerm(coefs[i], realVars.get(i));
+        }
+        GRBConstr c = model.addConstr(expr, sense, rhs, "temp_branch");
+        model.update();
+        return c;
+    }
+
+    /** Removes a constraint created by addTempRow. */
+    public void removeTempRow(GRBConstr c) throws GRBException {
+        model.remove(c);
+        model.update();
+    }
+
+    /**
+     * Solve the current LP and return its objective.
+     * Returns Double.POSITIVE_INFINITY when infeasible.
+     */
+    public double solveReturnObjective() throws GRBException {
+        model.set(GRB.IntParam.Method, 1);   // barrier — fast for repeated LP solves
+        model.optimize();
+        int status = model.get(GRB.IntAttr.Status);
+        if (status == GRB.Status.OPTIMAL)
+            return model.get(GRB.DoubleAttr.ObjVal);
+        return Double.POSITIVE_INFINITY;
+    }
+
+    /** Total number of real (route) variables currently in the master. */
+    public int getNumRealVars() { return realVars.size(); }
+
+    /** Underlying routes parallel to realVars; needed for coefficient computation. */
+    public List<Route> getRealVarRoutesList() { return realVarRoutes; }
+
+    public void addPermanentRow(double[] coefs, char sense, double rhs, String name) throws GRBException {
+        GRBLinExpr expr = new GRBLinExpr();
+        for (int i = 0; i < realVars.size(); i++) {
+            if (Math.abs(coefs[i]) > Constant.EPSILON)
+                expr.addTerm(coefs[i], realVars.get(i));
+        }
+        model.addConstr(expr, sense, rhs, name);
+        model.update();
+    }
+
+    private final List<BranchRowHandle> branchRows = new ArrayList<>();
+
+    private static class BranchRowHandle {
+        final GRBConstr constr;
+        final BranchDecision dec;
+        BranchRowHandle(GRBConstr c, BranchDecision d) { constr = c; dec = d; }
+    }
+
+    /** Adds a permanent branch row. Coefficients cover every current column. */
+    public void addBranchRow(BranchDecision dec) throws GRBException {
+        GRBLinExpr expr = new GRBLinExpr();
+        for (int i = 0; i < realVars.size(); i++) {
+            double coef = dec.candidate.coefficient(realVarRoutes.get(i));
+            if (Math.abs(coef) > Constant.EPSILON)
+                expr.addTerm(coef, realVars.get(i));
+        }
+        char sense = dec.upperBound ? GRB.LESS_EQUAL : GRB.GREATER_EQUAL;
+        GRBConstr c = model.addConstr(expr, sense, dec.rhs, "branch_" + dec.candidate);
+        branchRows.add(new BranchRowHandle(c, dec));
+        model.update();
+    }
+
+    /** Flips λ and artificials to binary, solves, caches results, restores LP mode. */
+    public boolean solveAsMip() throws GRBException {
+        try {
+            setInteger(true);
+            model.set(GRB.DoubleParam.MIPGap, 1e-4);
+            model.set(GRB.IntParam.Threads,
+                    Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
+            model.set(GRB.IntParam.Method, -1);
+            model.optimize();
+
+            int status = model.get(GRB.IntAttr.Status);
+            int sols   = model.get(GRB.IntAttr.SolCount);
+            System.out.printf("    [MIP] status=%d sols=%d gap=%.2e obj=%.6f%n",
+                    status, sols,
+                    sols > 0 ? model.get(GRB.DoubleAttr.MIPGap) : Double.NaN,
+                    sols > 0 ? model.get(GRB.DoubleAttr.ObjVal) : Double.NaN);
+
+            if (sols > 0
+                    && (status == GRB.Status.OPTIMAL
+                    || status == GRB.Status.SUBOPTIMAL
+                    || status == GRB.Status.TIME_LIMIT
+                    || status == GRB.Status.INTERRUPTED)) {
+                objectiveValue   = model.get(GRB.DoubleAttr.ObjVal);
+                artificialValues = extractArtificialVariableValues();
+                return true;
+            }
+            return false;
+        } finally {
+            // CRITICAL: restore LP mode so the next master.solve() is a real LP.
+            setInteger(false);
+        }
+    }
+
+    public boolean addAllAndSolveMip(List<List<Route>> enumeratedByD) throws GRBException {
+        if (enumeratedByD == null) return false;
+        int before = realVars.size();
+        for (List<Route> byD : enumeratedByD) {
+            if (byD == null) continue;
+            for (Route r : byD) addColumn(r, null);
+        }
+        System.out.println("    [MIP] added " + (realVars.size() - before)
+                        + " new columns, total = " + realVars.size());
+        return solveAsMip();
     }
 }

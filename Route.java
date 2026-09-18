@@ -160,5 +160,28 @@ public class Route {
         DroneSchedule s = customerDroneSchedule.get(u);
         return s != null && s.customerServed.contains(c);
     }
+
+    public boolean usesTruckArc(int i, int j) {
+        for (int k = 1; k < sequence.size(); k++) {
+            if (sequence.get(k - 1).id == i && sequence.get(k).id == j) return true;
+        }
+        return false;
+    }
+
+    /** Number of trucks (= 1) contributed by this route. */
+    public double coefficientTotalTrucks() { return 1.0; }
+
+    /** Total drones used. */
+    public double coefficientTotalDrones() { return getNumDrone(); }
+
+    /** 1 if this route uses exactly d drones, else 0. */
+    public double coefficientTrucksWithD(int d) {
+        return getNumDrone() == d ? 1.0 : 0.0;
+    }
+
+    /** 1 if the truck path uses arc (i,j), else 0. */
+    public double coefficientTruckArc(int i, int j) {
+        return usesTruckArc(i, j) ? 1.0 : 0.0;
+    }
     
 }

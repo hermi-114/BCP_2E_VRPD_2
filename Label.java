@@ -9,11 +9,10 @@ public class Label {
     int d;
 
     BigInteger ngSet;
-    BigInteger customerServed;      // union of truckBit and droneBit
+    BigInteger customerServed;
 
-    // ---- NEW: branch state ----
-    BigInteger truckBit = BigInteger.ZERO;   // customers visited by truck in this label
-    BigInteger droneBit = BigInteger.ZERO;   // customers served by drone in this label
+    // ---- arc-forcing resource (only used when branching forces an arc) ----
+    public boolean requiredArcUsed = false;
 
     Label predecessor;
     RCSPArc arc;
@@ -23,7 +22,5 @@ public class Label {
         this.node = node;
         this.ngSet = BigInteger.ZERO;
         this.customerServed = BigInteger.ZERO;
-        this.truckBit = BigInteger.ZERO;
-        this.droneBit = BigInteger.ZERO;
     }
 }

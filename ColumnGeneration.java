@@ -8,7 +8,6 @@ public class ColumnGeneration {
 
     private static final int MAX_CUT_ROUNDS = 5;
 
-    // ---- dual price smoothing state (Pessoa 2018) ----
     private double[] smoothedDuals = null;
     private double   smoothedTruck = Double.NaN;
     private double   smoothedDrone = Double.NaN;
@@ -21,7 +20,7 @@ public class ColumnGeneration {
         public double[]     artificial;
         public boolean      lpOptimal;
         public boolean      allCovered;
-        public boolean      solvedAsMip;    // NEW: MIP shortcut was used
+        public boolean      solvedAsMip;
     }
 
     public void solve() throws GRBException {
@@ -42,31 +41,22 @@ public class ColumnGeneration {
         res.objective  = Double.POSITIVE_INFINITY;
         res.solvedAsMip = false;
 
-        // reset smoothing per node
-        smoothedDuals = null;
-        smoothedTruck = Double.NaN;
-        smoothedDrone = Double.NaN;
+        smoothedDuals  = null;
+        smoothedTruck  = Double.NaN;
+        smoothedDrone  = Double.NaN;
         smoothingAlpha = Constant.SMOOTHING_ALPHA_INIT;
 
-        // ---------- 1. forced state ----------
         BigInteger forcedCustomers = BigInteger.ZERO;
         double forcedCost = 0.0;
         int forcedVehicles = 0, forcedDrones = 0;
-        for (Route r : node.forcedRoutes) {
-            forcedCustomers = forcedCustomers.or(r.customerServedHashed);
-            forcedCost     += r.totalTime;
-            forcedVehicles += 1;
-            forcedDrones   += r.getNumDrone();
-        }
-
+        // no more forced routes; BCPNode holds decisions only
         int vehCap   = Constant.MAX_VEHICLE - forcedVehicles;
         int droneCap = Constant.MAX_DRONE   - forcedDrones;
         if (vehCap < 0 || droneCap < 0) return res;
 
-        // ---------- 2. master / cuts / pricing ----------
         MasterProblem master = new MasterProblem(Constant.TOTAL_CUSTOMER);
         CuttingPlanes cuttingPlanes = new CuttingPlanes();
-        Set<String> signatures = new HashSet<>(node.forbiddenSigs);
+        Set<String> signatures = new HashSet<>();
 
         PricingProblem pricing = new PricingProblem(cuttingPlanes, signatures);
         CutGeneration  cutGeneration = new CutGeneration();
@@ -74,95 +64,86 @@ public class ColumnGeneration {
         master.setResourceCaps(vehCap, droneCap);
         master.setUncoveredMask(forcedCustomers);
 
-        int maxColRounds   = 50;
-        int maxAddPerRound = Constant.MAX_COLUMNS_EXACT
-                           + Constant.MAX_COLUMNS_LIGHT
-                           + Constant.MAX_COLUMNS_HEURISTIC;
+        // apply node decisions as permanent rows on this node's master
+        // System.out.println("    [DBG] node decisions = " + node.decisions);
+        for (BranchDecision dec : node.decisions) {
+            master.addBranchRow(dec);
+        }
+
+        int maxColRounds   = 100;
+        int maxAddPerRound = 40;
         boolean converged  = false;
 
-        // ---------- 3. column generation ----------
         for (int it = 0; it < maxColRounds; it++) {
-
             pricing.setCgIteration(it);
-
-            try { master.solve(); }
-            catch (GRBException e) { master.dispose(); return res; }
-
+            try { master.solve(); } catch (GRBException e) { master.dispose(); return res; }
             cuttingPlanes.updateDuals(master);
 
-            double[] rawPi   = master.getDuals();
-            double rawTruck  = master.getDualVehicle();
-            double rawDrone  = master.getDualDrone();
-
-            // ---- dual smoothing ----
+            double[] rawPi  = master.getDuals();
+            double rawTruck = master.getDualVehicle();
+            double rawDrone = master.getDualDrone();
             applySmoothing(rawPi, rawTruck, rawDrone);
 
-            pricing.runThreeStagePricing(
-                    smoothedDuals, smoothedTruck, smoothedDrone,
-                    forcedCustomers, node.forbiddenSigs,
-                    node.forcedTruck, node.forcedDrone, node.droneFromNode);
+            pricing.runThreeStagePricing(smoothedDuals, smoothedTruck, smoothedDrone,
+                                         forcedCustomers, Collections.emptySet(),
+                                         node.decisions, false);
 
-            // ---- MIP shortcut from enumeration ----
-            if (pricing.isEnumerationComplete()) {
-                int totalEnum = pricing.getEnumeratedTotalCount();
-                if (totalEnum > 0 && totalEnum <= Constant.ROUTE_ENUM_THRESHOLD) {
-                    System.out.println("    [CG] enumeration complete with "
-                                     + totalEnum + " routes → solving as MIP.");
-                    boolean ok = master.addAllAndSolveMip(pricing.getEnumeratedByD());
-                    if (ok) {
-                        res.solvedAsMip = true;
-                        res.lpOptimal   = true;
-                        res.lambda      = master.getPrimes();
-                        res.columns     = new ArrayList<>(master.getRealRoutes());
-                        res.artificial  = master.artificialValues.clone();
-                        res.objective   = forcedCost + master.getObjectiveValue();
-                        res.allCovered  = true;
-                        for (double a : res.artificial)
-                            if (a > Constant.EPSILON) { res.allCovered = false; break; }
-                        master.dispose();
-                        return res;
+            List<Route> cand = pricing.getNewRoutes();
+            boolean lastIter = (it == maxColRounds - 1);
+
+            // Trigger enumeration on the raw duals either when the smoothed pass
+            // produced nothing, OR on the last iteration of the round cap.
+            if (cand.isEmpty() || lastIter) {
+                pricing.runThreeStagePricing(rawPi, rawTruck, rawDrone,
+                                            forcedCustomers, Collections.emptySet(),
+                                            node.decisions, true);
+                cand = pricing.getNewRoutes();
+            }
+            if (cand.isEmpty()) { converged = true; break; }
+
+            // MIP shortcut
+            if (pricing.isEnumerationComplete() && node.depth <= 2) {
+                int total = pricing.getEnumeratedTotalCount();
+                if (total > 0 && total <= Constant.ROUTE_ENUM_THRESHOLD) {
+                    if (master.addAllAndSolveMip(pricing.getEnumeratedByD())) {
+                        double[] art = master.extractArtificialVariableValues();
+                        boolean ok = true;
+                        for (double a : art) if (a > Constant.EPSILON) { ok = false; break; }
+                        if (ok) {
+                            res.solvedAsMip = true;
+                            res.lpOptimal   = true;
+                            res.lambda      = master.getPrimes();
+                            res.columns     = new ArrayList<>(master.getRealRoutes());
+                            res.artificial  = art;
+                            res.objective   = master.getObjectiveValue();
+                            res.allCovered  = true;
+                            master.dispose();
+                            return res;
+                        }
                     }
                 }
-                // If enumeration didn't pay off (master blew up), fall back below
-            }
-
-            List<Route> candidates = pricing.getNewRoutes();
-            if (candidates.isEmpty()) {
-                System.out.println("    [CG] iteration " + it + ": converged.");
-                converged = true;
-                break;
             }
 
             boolean added = false;
             int addedCount = 0;
-            for (Route r : candidates) {
+            for (Route r : cand) {
                 if (addedCount >= maxAddPerRound) break;
                 if (r.reducedCost >= -Constant.EPSILON) continue;
-                if (!compatible(r, node)) continue;
                 master.addColumn(r, cuttingPlanes);
                 added = true;
                 addedCount++;
             }
-            System.out.println("    [CG] iteration " + it + ": added " + addedCount
-                             + " columns (" + candidates.size() + " candidates).");
-
             if (!added) {
-                // pricing failed to produce a *new* improving column → decrease smoothing
                 smoothingAlpha = Math.max(Constant.SMOOTHING_ALPHA_MIN,
                                           smoothingAlpha * Constant.SMOOTHING_ALPHA_DECAY);
-                System.out.printf("    [CG] smoothing α → %.2f%n", smoothingAlpha);
                 converged = true;
                 break;
             }
         }
 
-        // ---------- refresh primals ----------
-        try {
-            master.solve();
-            cuttingPlanes.updateDuals(master);
-        } catch (GRBException e) { master.dispose(); return res; }
+        try { master.solve(); cuttingPlanes.updateDuals(master); }
+        catch (GRBException e) { master.dispose(); return res; }
 
-        // ---------- 4. cut generation with rollback ----------
         for (int cr = 0; cr < MAX_CUT_ROUNDS; cr++) {
             double[] lambda = master.getPrimes();
             List<ICut> newCuts = cutGeneration.separateCuts(master.getRealRoutes(), lambda);
@@ -177,34 +158,27 @@ public class ColumnGeneration {
                 master.solve();
                 cuttingPlanes.updateDuals(master);
             } catch (GRBException e) {
-                for (int k = addedC.size() - 1; k >= 0; k--) {
+                for (int k = addedC.size() - 1; k >= 0; k--)
                     try { master.removeConstraint(addedC.get(k)); } catch (GRBException ig) {}
-                }
-                for (int k = 0; k < addedC.size(); k++) {
+                for (int k = 0; k < addedC.size(); k++)
                     if (!cuttingPlanes.cuts.isEmpty())
                         cuttingPlanes.cuts.remove(cuttingPlanes.cuts.size() - 1);
-                }
                 try { master.solve(); } catch (GRBException ig) {}
                 break;
             }
 
-            double[] rawPi  = master.getDuals();
-            double rawTruck = master.getDualVehicle();
-            double rawDrone = master.getDualDrone();
-            applySmoothing(rawPi, rawTruck, rawDrone);
-
-            pricing.runThreeStagePricing(
-                    smoothedDuals, smoothedTruck, smoothedDrone,
-                    forcedCustomers, node.forbiddenSigs,
-                    node.forcedTruck, node.forcedDrone, node.droneFromNode);
-
+            double[] pi = master.getDuals();
+            double dT   = master.getDualVehicle();
+            double dD   = master.getDualDrone();
+            pricing.runThreeStagePricing(pi, dT, dD,
+                                         forcedCustomers, Collections.emptySet(),
+                                         node.decisions, false);
             List<Route> cand = pricing.getNewRoutes();
             boolean addedCol = false;
             int cnt = 0;
             for (Route r : cand) {
                 if (cnt++ >= maxAddPerRound) break;
                 if (r.reducedCost >= -Constant.EPSILON) continue;
-                if (!compatible(r, node)) continue;
                 master.addColumn(r, cuttingPlanes);
                 addedCol = true;
             }
@@ -214,27 +188,66 @@ public class ColumnGeneration {
             }
         }
 
-        // ---------- 5. final solve ----------
+        // ---- Final enumeration attempt on raw duals ----
+        if (!pricing.isEnumerationComplete() && node.depth <= 1) {
+            try {
+                master.solve();
+                double[] rawPi  = master.getDuals();
+                double rawTruck = master.getDualVehicle();
+                double rawDrone = master.getDualDrone();
+                pricing.runThreeStagePricing(rawPi, rawTruck, rawDrone,
+                                            forcedCustomers, Collections.emptySet(),
+                                            node.decisions, true);
+
+                // If enumeration succeeded, add ALL enumerated routes and solve as MIP.
+                if (pricing.isEnumerationComplete()) {
+                    int total = pricing.getEnumeratedTotalCount();
+                    if (total > 0 && total <= Constant.ROUTE_ENUM_THRESHOLD) {
+                        System.out.println("    [ENUM] using " + total
+                                        + " enumerated routes for MIP shortcut.");
+                        if (master.addAllAndSolveMip(pricing.getEnumeratedByD())) {
+                            double[] art = master.extractArtificialVariableValues();
+                            boolean ok = true;
+                            for (double a : art)
+                                if (a > Constant.EPSILON) { ok = false; break; }
+                            if (ok) {
+                                res.solvedAsMip = true;
+                                res.lpOptimal   = true;
+                                res.lambda      = master.getPrimes();
+                                res.columns     = new ArrayList<>(master.getRealRoutes());
+                                res.artificial  = art;
+                                res.objective   = master.getObjectiveValue();
+                                res.allCovered  = true;
+                                master.dispose();
+                                return res;
+                            }
+                        }
+                    }
+                }
+            } catch (GRBException ig) {
+                // swallow — fall through to LP result
+            }
+        }
+
         try { master.solve(); }
         catch (GRBException e) { master.dispose(); return res; }
 
         res.lpOptimal  = true;
         res.lambda     = master.getPrimes();
         res.columns    = new ArrayList<>(master.getRealRoutes());
-        res.artificial = master.artificialValues.clone();
+        res.artificial = master.extractArtificialVariableValues();
         res.objective  = forcedCost + master.getObjectiveValue();
 
         res.allCovered = true;
-        for (double a : res.artificial) {
+        for (double a : res.artificial)
             if (a > Constant.EPSILON) { res.allCovered = false; break; }
-        }
 
         master.dispose();
         return res;
     }
 
     // ------------------------------------------------------------------
-    //  Dual price smoothing (Pessoa et al. 2018)
+    //  Dual price smoothing
     // ------------------------------------------------------------------
     private void applySmoothing(double[] pi, double dualTruck, double dualDrone) {
         if (smoothedDuals == null) {
@@ -244,29 +257,99 @@ public class ColumnGeneration {
             return;
         }
         double a = smoothingAlpha;
-        for (int i = 0; i < pi.length; i++) {
+        for (int i = 0; i < pi.length; i++)
             smoothedDuals[i] = a * pi[i] + (1.0 - a) * smoothedDuals[i];
-        }
         smoothedTruck = a * dualTruck + (1.0 - a) * smoothedTruck;
         smoothedDrone = a * dualDrone + (1.0 - a) * smoothedDrone;
     }
 
-    // ------------------------------------------------------------------
-    //  Branch-compatibility safety net
-    // ------------------------------------------------------------------
-    private static boolean compatible(Route r, BCPNode node) {
-        BigInteger seqMask   = r.truckServedMask();
-        BigInteger droneMask = r.droneServedMask();
+    public NodeResult solveForNodeAsMip(BCPNode node, List<Route> columns) throws GRBException {
+        NodeResult res = new NodeResult();
+        res.lpOptimal = false;
+        res.allCovered = false;
+        res.solvedAsMip = false;
+        res.lambda = new double[0];
+        res.columns = new ArrayList<>();
+        res.artificial = new double[Constant.TOTAL_CUSTOMER];
+        res.objective = Double.POSITIVE_INFINITY;
 
-        if (!seqMask.and(node.forcedTruck).equals(node.forcedTruck)) return false;
-        if (!droneMask.and(node.forcedDrone).equals(node.forcedDrone)) return false;
-        if (seqMask.and(node.forcedDrone).signum() != 0) return false;
+        MasterProblem master = new MasterProblem(Constant.TOTAL_CUSTOMER);
+        master.setResourceCaps(Constant.MAX_VEHICLE, Constant.MAX_DRONE);
 
-        for (Map.Entry<Integer,Integer> e : node.droneFromNode.entrySet()) {
-            int c = e.getKey(), u = e.getValue();
-            if (seqMask.testBit(c)) return false;
-            if (!r.isDroneServedFrom(c, u)) return false;
+        for (BranchDecision dec : node.decisions) master.addBranchRow(dec);
+        for (Route r : columns) {
+            try { master.addColumn(r, null); } catch (GRBException ignore) {}
         }
-        return true;
+
+        if (master.solveAsMip()) {
+            double[] art = master.extractArtificialVariableValues();
+            boolean ok = true;
+            for (double a : art) if (a > Constant.EPSILON) { ok = false; break; }
+            if (ok) {
+                res.lpOptimal   = true;
+                res.allCovered  = true;
+                res.solvedAsMip = true;
+                res.lambda      = master.getPrimes();
+                res.columns     = new ArrayList<>(master.getRealRoutes());
+                res.artificial  = art;
+                res.objective   = master.getObjectiveValue();
+            }
+        }
+        master.dispose();
+        return res;
+    }
+
+    /**
+     * Evaluate one branch side using ONLY the parent's column pool.
+     * No column generation, no cuts. Single LP solve with the branch row added.
+     *
+     * Used by strong branching phases 2 and 3.
+     */
+    public NodeResult solveForNodeWithoutCG(BCPNode node, List<Route> parentColumns)
+            throws GRBException {
+
+        NodeResult res = new NodeResult();
+        res.lpOptimal  = false;
+        res.allCovered = false;
+        res.solvedAsMip = false;
+        res.lambda     = new double[0];
+        res.columns    = new ArrayList<>();
+        res.artificial = new double[Constant.TOTAL_CUSTOMER];
+        res.objective  = Double.POSITIVE_INFINITY;
+
+        MasterProblem master = new MasterProblem(Constant.TOTAL_CUSTOMER);
+        master.setResourceCaps(Constant.MAX_VEHICLE, Constant.MAX_DRONE);
+
+        // 1. branch rows first (empty coefficients)
+        for (BranchDecision dec : node.decisions) {
+            master.addBranchRow(dec);
+        }
+
+        // 2. add parent columns — addColumn extends every branch row
+        if (parentColumns != null) {
+            for (Route r : parentColumns) {
+                try { master.addColumn(r, null); } catch (GRBException ignore) {}
+            }
+        }
+
+        // 3. single LP solve
+        try {
+            double obj = master.solveReturnObjective();
+            if (!Double.isInfinite(obj)) {
+                res.lpOptimal  = true;
+                res.objective  = obj;
+                res.lambda     = master.getPrimes();
+                res.columns    = new ArrayList<>(master.getRealRoutes());
+                res.artificial = master.extractArtificialVariableValues();
+                res.allCovered = true;
+                for (double a : res.artificial)
+                    if (a > Constant.EPSILON) { res.allCovered = false; break; }
+            }
+        } catch (GRBException e) {
+            res.lpOptimal = false;
+        } finally {
+            master.dispose();
+        }
+        return res;
     }
 }

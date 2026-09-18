@@ -2,7 +2,11 @@ import java.io.BufferedReader;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
+
 
 public class DataLoader {
     
@@ -17,6 +21,7 @@ public class DataLoader {
         System.out.println("Start reading file...");
 
         int counter = 0;
+        List<Integer> customers = new ArrayList<>();
 
         try (BufferedReader br = new BufferedReader(new FileReader(path))) {
     
@@ -42,6 +47,8 @@ public class DataLoader {
 
                 VRPInstance.nodes.add(node);
 
+                if(id != 0) customers.add(id);
+
                 counter++;
 
             }
@@ -53,6 +60,13 @@ public class DataLoader {
 
             Constant.TOTAL_CUSTOMER = counter - 1; // customers and 1 depot(id=0)
             Constant.TRUCK_MAX_SHIFT_TIME = VRPInstance.nodes.get(0).tw_b;
+
+            int numCannotServeredByDrone = Constant.TOTAL_CUSTOMER / 5;
+            Collections.shuffle(customers);
+            for(int i = 0; i < numCannotServeredByDrone; i++) {
+                VRPInstance.nodes.get(i).canServedByDrone = false;
+            }
+
 
             br.close();
             System.out.println("Done read file");

@@ -14,7 +14,7 @@ public class Constant {
     public static int LABEL_MAX_NG_SIZE = 10;
 
     // =============== CONSTANTS ===================
-    public static double TRUCK_SPEED = 35;
+    public static double TRUCK_SPEED = 60;
     public static double TRUCK_PAYLOAD; // based on dataset, get in capacities.txt
 
     //
@@ -25,7 +25,7 @@ public class Constant {
     public static double DRONE_SPINNING_BLADE_AREA = 0.586; // m^2 per blade
     public static int DRONE_BLADE_NUMBER = 4; // blades
     public static double DRONE_BATTERY_CAPACITY = 2308.8; // Wh
-    public static double DRONE_SPEED = 35; // km/h
+    public static double DRONE_SPEED = 60; // km/h
     public static double DRONE_SETUP_TIME = 0.083; // h
 
     public static double G_FORCE = 9.81; // N/kg
@@ -65,5 +65,13 @@ public class Constant {
 
     public static int    ARC_ELIMINATION_START_ITER = 10;  // after this many CG iterations
     public static double ARC_ELIMINATION_EPS        = 1e-6;
+
+    // ============== STRONG BRANCHING (Pecin 2017a) ===================
+    public static int    STRONG_BRANCHING_PHASE1_KEEP   = 12;   // candidates after phase 1
+    public static int    STRONG_BRANCHING_PHASE2_KEEP   = 6;    // candidates after phase 2
+    public static int    STRONG_BRANCHING_HEUR_CG_ROUNDS = 3;   // heuristic CG rounds in phase 3
+    public static double STRONG_BRANCHING_HISTORY_DECAY = 0.9;   // decay past history scores
+    public static double STRONG_BRANCHING_INFEAS_SCORE  = 1e6;  // score when a child is infeasible
+    public static int    MAX_ARC_CANDIDATES_PER_NODE    = 200;   // cap on arc candidates
 
 }
