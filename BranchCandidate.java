@@ -5,26 +5,17 @@ public class BranchCandidate {
     public enum Type { TOTAL_TRUCKS, TOTAL_DRONES, TRUCKS_WITH_D, TRUCK_ARC }
 
     public final Type type;
-    public final int  parameter;   // d for TRUCKS_WITH_D
-    public final int  arcI, arcJ;  // for TRUCK_ARC
+    public final int  parameter;
+    public final int  arcI, arcJ;
 
-    public BranchCandidate(Type type) {
-        this(type, -1, -1, -1);
-    }
-    public BranchCandidate(Type type, int parameter) {
-        this(type, parameter, -1, -1);
-    }
-    public BranchCandidate(Type type, int arcI, int arcJ) {
-        this(type, -1, arcI, arcJ);
-    }
+    public BranchCandidate(Type type) { this(type, -1, -1, -1); }
+    public BranchCandidate(Type type, int parameter) { this(type, parameter, -1, -1); }
+    public BranchCandidate(Type type, int arcI, int arcJ) { this(type, -1, arcI, arcJ); }
     private BranchCandidate(Type type, int parameter, int arcI, int arcJ) {
-        this.type = type;
-        this.parameter = parameter;
-        this.arcI = arcI;
-        this.arcJ = arcJ;
+        this.type = type; this.parameter = parameter;
+        this.arcI = arcI; this.arcJ = arcJ;
     }
 
-    /** Coefficient of a route in the aggregate variable this candidate represents. */
     public double coefficient(Route r) {
         switch (type) {
             case TOTAL_TRUCKS:  return r.coefficientTotalTrucks();
@@ -45,9 +36,7 @@ public class BranchCandidate {
     }
 
     @Override
-    public int hashCode() {
-        return Objects.hash(type, parameter, arcI, arcJ);
-    }
+    public int hashCode() { return Objects.hash(type, parameter, arcI, arcJ); }
 
     @Override
     public String toString() {

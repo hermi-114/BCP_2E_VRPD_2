@@ -1,4 +1,3 @@
-
 import java.util.Set;
 
 public interface ICut {
@@ -7,8 +6,12 @@ public interface ICut {
     double getRHS();
     Set<Integer> getSubsetC();
 
+    /** Violation measured at separation time; set by CutGeneration. */
+    double getViolation();
+    void   setViolation(double v);
+
     double getCoefficientForRoute(Route route);
-    
+
     // Penalties for pricing subproblem (arc reduced costs)
     double getReducedCostPenaltyForTruckArc(int src, int dst, int numDrones);
     double getReducedCostPenaltyForDroneArc(int park, DroneSchedule schedule, int numDrones);

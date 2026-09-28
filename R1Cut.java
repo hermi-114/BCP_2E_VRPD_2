@@ -2,17 +2,16 @@ import java.util.*;
 
 public class R1Cut implements ICut {
     public final Set<Integer> subsetC;
-    public final Set<Integer> memorySet;      // M, with C ⊆ M ⊆ V₊
+    public final Set<Integer> memorySet;
     public final int rhs;
     public final Map<Integer, Double> rhoMap;
     public double dual = 0.0;
+    public double violation = 0.0;
 
-    /** Constructor with M = C (simplest form). */
     public R1Cut(Set<Integer> C) {
         this(C, new HashSet<>(C));
     }
 
-    /** Constructor with explicit memory set. */
     public R1Cut(Set<Integer> C, Set<Integer> M) {
         this.subsetC  = new HashSet<>(C);
         this.memorySet = new HashSet<>(M);
@@ -23,12 +22,13 @@ public class R1Cut implements ICut {
         this.rhs = (int) Math.floor(sumRho + Constant.EPSILON);
     }
 
-    @Override public double getDual()           { return dual; }
-    @Override public void setDual(double d)     { this.dual = d; }
-    @Override public double getRHS()            { return rhs; }
-    @Override public Set<Integer> getSubsetC()  { return subsetC; }
+    @Override public double getDual()              { return dual; }
+    @Override public void   setDual(double d)      { this.dual = d; }
+    @Override public double getRHS()               { return rhs; }
+    @Override public Set<Integer> getSubsetC()     { return subsetC; }
+    @Override public double getViolation()         { return violation; }
+    @Override public void   setViolation(double v) { this.violation = v; }
 
-    /** Column coefficient in the cut for a finished route (α for the whole path). */
     @Override
     public double getCoefficientForRoute(Route route) {
         double s = 0.0, alpha = 0.0;
@@ -43,20 +43,15 @@ public class R1Cut implements ICut {
         return alpha;
     }
 
-    /**
-     * Applies the state update for visiting `node` given current `s`.
-     * Returns the penalty contribution (already multiplied by -dual) and
-     * writes the new state back into `sHolder[cutIndex]`.
-     */
     public double visitNode(int node, double[] sHolder, int cutIndex) {
         double s = sHolder[cutIndex];
-        if (!memorySet.contains(node)) s = 0.0;         // memory reset
+        if (!memorySet.contains(node)) s = 0.0;
         Double rho = rhoMap.get(node);
         if (rho != null) s += rho;
         double penalty = 0.0;
         while (s >= 1.0 - Constant.EPSILON) {
             s -= 1.0;
-            penalty -= dual;                             // = -dual * 1
+            penalty -= dual;
         }
         sHolder[cutIndex] = s;
         return penalty;
@@ -64,7 +59,6 @@ public class R1Cut implements ICut {
 
     @Override
     public double getReducedCostPenaltyForTruckArc(int src, int dst, int numDrones) {
-        // Not used any more (stateful penalty applied at extension)
         return 0.0;
     }
 

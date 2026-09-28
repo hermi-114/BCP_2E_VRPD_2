@@ -12,6 +12,7 @@ public class VRPInstance {
     public static List<Route> routePool = new ArrayList<>();
 
     public static BigInteger[] ngNeighborhood;
+    public static BigInteger truckOnlyMask = BigInteger.ZERO;
 
     public static void reset() {
         nodes.clear();

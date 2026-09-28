@@ -40,8 +40,8 @@ public class DroneScheduleEnumeration {
         double B_c = Constant.DRONE_BATTERY_CAPACITY; // W*h
 
         double back = Math.sqrt(g * g * g / (2 * p * S * h));
-        double energyGo = Math.pow(W + m + q, 1.5) * back; // W
-        double energyBack = Math.pow(W + m, 1.5) * back; // W
+        double energyGo   = Math.pow(W + m + q, 1.5) * back; // W
+        double energyBack = Math.pow(W + m    , 1.5) * back; // W
 
         double totalTime = distance / Constant.DRONE_SPEED; // h
 

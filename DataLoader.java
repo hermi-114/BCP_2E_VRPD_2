@@ -64,13 +64,29 @@ public class DataLoader {
             int numCannotServeredByDrone = Constant.TOTAL_CUSTOMER / 5;
             Collections.shuffle(customers);
             for(int i = 0; i < numCannotServeredByDrone; i++) {
-                VRPInstance.nodes.get(i).canServedByDrone = false;
+                Node node = VRPInstance.nodes.get(customers.get(i));
+                if(node.servingTime < (node.tw_b - node.tw_a)) node.canServedByDrone = false; // if it cannot be served ny truck, it must be served by drone
             }
 
+            for (int c = 1; c <= Constant.TOTAL_CUSTOMER; c++) {
+                Node node = VRPInstance.nodes.get(c);
+                if (node.demand > Constant.DRONE_PAYLOAD || !node.canServedByDrone)
+                    VRPInstance.truckOnlyMask = VRPInstance.truckOnlyMask.setBit(c);
+            }
 
             br.close();
             System.out.println("Done read file");
             System.out.println();
+
+            System.out.printf("[Constant] %-32s = %s%n", "TRUCK_PAYLOAD", Constant.TRUCK_PAYLOAD);
+            System.out.printf("[Constant] %-32s = %s%n", "DRONE_AND_EQUIPMENT_WEIGHT", Constant.DRONE_AND_EQUIPMENT_WEIGHT);
+            System.out.printf("[Constant] %-32s = %s%n", "k = floor(Q / q_d)", Constant.MAX_DRONE_PER_VEHICLE);
+            // --- new lines ---------------------------------------------------------
+            System.out.printf("[Constant] %-32s = %s%n", "DRONE_SPEED", Constant.DRONE_SPEED);
+            System.out.printf("[Constant] %-32s = %s%n", "DRONE_PAYLOAD", Constant.DRONE_PAYLOAD);
+            System.out.printf("[Constant] %-32s = %s%n", "MAX_DRONE", Constant.MAX_DRONE);
+            // ----------------------------------------------------------------------
+            
             
         } catch(FileNotFoundException e) {
             System.err.println("FILE NOT FOUND: " + '"' + path + '"');

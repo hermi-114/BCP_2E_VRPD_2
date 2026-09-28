@@ -1,8 +1,6 @@
-import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.List;
-
 import com.gurobi.gurobi.*;
+import java.math.BigInteger;
+import java.util.*;
 
 public class MasterProblem {
 
@@ -21,6 +19,15 @@ public class MasterProblem {
     public double[] artificialValues;
     public double   objectiveValue;
 
+    private final Set<String> columnSignatures = new HashSet<>();
+    private final List<BranchRowHandle> branchRows = new ArrayList<>();
+
+    private static class BranchRowHandle {
+        final GRBConstr constr;
+        final BranchDecision dec;
+        BranchRowHandle(GRBConstr c, BranchDecision d) { constr = c; dec = d; }
+    }
+
     public MasterProblem(int totalCustomer) throws GRBException {
         env = new GRBEnv(true);
         env.set(GRB.IntParam.LogToConsole, 0);
@@ -29,19 +36,16 @@ public class MasterProblem {
         model = new GRBModel(env);
 
         coverConstr = new GRBConstr[totalCustomer];
-        for (int i = 0; i < totalCustomer; i++) {
-            coverConstr[i] = model.addConstr(new GRBLinExpr(),
-                                             GRB.EQUAL, 1.0, "cover_" + (i + 1));
-        }
-        truckConstr = model.addConstr(new GRBLinExpr(), GRB.LESS_EQUAL,
-                                      Constant.MAX_VEHICLE, "c_truck");
-        droneConstr = model.addConstr(new GRBLinExpr(), GRB.LESS_EQUAL,
-                                      Constant.MAX_DRONE,   "c_drone");
+        for (int i = 0; i < totalCustomer; i++)
+            coverConstr[i] = model.addConstr(new GRBLinExpr(), GRB.EQUAL, 1.0, "cover_" + (i + 1));
 
-        artificialVars   = new ArrayList<>();
-        realVars         = new ArrayList<>();
-        realVarRoutes    = new ArrayList<>();
-        cutsConstr       = new ArrayList<>();
+        truckConstr = model.addConstr(new GRBLinExpr(), GRB.LESS_EQUAL, Constant.MAX_VEHICLE, "c_truck");
+        droneConstr = model.addConstr(new GRBLinExpr(), GRB.LESS_EQUAL, Constant.MAX_DRONE,   "c_drone");
+
+        artificialVars = new ArrayList<>();
+        realVars       = new ArrayList<>();
+        realVarRoutes  = new ArrayList<>();
+        cutsConstr     = new ArrayList<>();
         artificialValues = new double[totalCustomer];
 
         initializeArtificialColumns(totalCustomer);
@@ -49,13 +53,11 @@ public class MasterProblem {
     }
 
     private void initializeArtificialColumns(int totalCustomer) throws GRBException {
-        // Lower than 9999 to keep the LP numerically stable relative to route costs.
         final double M = 1000.0;
         for (int i = 0; i < totalCustomer; i++) {
             GRBColumn col = new GRBColumn();
             col.addTerm(1, coverConstr[i]);
-            GRBVar dummy = model.addVar(0, 1, M, GRB.CONTINUOUS, col, "dummy_" + i);
-            artificialVars.add(dummy);
+            artificialVars.add(model.addVar(0, 1, M, GRB.CONTINUOUS, col, "dummy_" + i));
         }
         model.update();
     }
@@ -76,10 +78,20 @@ public class MasterProblem {
         model.update();
     }
 
-    private final java.util.Set<String> columnSignatures = new java.util.HashSet<>();
+    /** Adds a permanent branch row. Coefficients cover every current column. */
+    public void addBranchRow(BranchDecision dec) throws GRBException {
+        GRBLinExpr expr = new GRBLinExpr();
+        for (int i = 0; i < realVars.size(); i++) {
+            double coef = dec.candidate.coefficient(realVarRoutes.get(i));
+            if (Math.abs(coef) > Constant.EPSILON) expr.addTerm(coef, realVars.get(i));
+        }
+        char sense = dec.upperBound ? GRB.LESS_EQUAL : GRB.GREATER_EQUAL;
+        GRBConstr c = model.addConstr(expr, sense, dec.rhs, "branch_" + dec.candidate);
+        branchRows.add(new BranchRowHandle(c, dec));
+        model.update();
+    }
 
     public void addColumn(Route route, CuttingPlanes cuttingPlanes) throws GRBException {
-        // guard against duplicate columns
         String sig = route.getSignature();
         if (columnSignatures.contains(sig)) return;
         columnSignatures.add(sig);
@@ -87,16 +99,13 @@ public class MasterProblem {
         double cost = route.totalTime;
         GRBColumn col = new GRBColumn();
 
-        // coverage
         for (int customer : route.customerServed) {
             if (customer == 0 || customer > Constant.TOTAL_CUSTOMER) continue;
             col.addTerm(1, coverConstr[customer - 1]);
         }
-        // resource caps
-        col.addTerm(1,                  truckConstr);
+        col.addTerm(1, truckConstr);
         col.addTerm(route.getNumDrone(), droneConstr);
 
-        // cuts
         if (cuttingPlanes != null && cuttingPlanes.cuts != null) {
             for (int i = 0; i < cuttingPlanes.cuts.size(); i++) {
                 double coef = cuttingPlanes.cuts.get(i).getCoefficientForRoute(route);
@@ -105,25 +114,18 @@ public class MasterProblem {
             }
         }
 
-        // ---- FIX: branch row coefficients go into the column BEFORE the var exists ----
+        // branch rows BEFORE the variable exists
         for (BranchRowHandle h : branchRows) {
             double coef = h.dec.candidate.coefficient(route);
-            if (Math.abs(coef) > Constant.EPSILON) {
-                col.addTerm(coef, h.constr);
-            }
+            if (Math.abs(coef) > Constant.EPSILON) col.addTerm(coef, h.constr);
         }
 
-        GRBVar realVar = model.addVar(0, 1, cost, GRB.CONTINUOUS, col,
-                                    "real_" + realVars.size());
+        GRBVar realVar = model.addVar(0, 1, cost, GRB.CONTINUOUS, col, "real_" + realVars.size());
         realVars.add(realVar);
         realVarRoutes.add(route);
         model.update();
     }
 
-    /**
-     * Adds a cut and returns the Gurobi constraint so the caller can roll
-     * it back if the subsequent re-solve becomes infeasible.
-     */
     public GRBConstr addCutAndReturn(ICut cut) throws GRBException {
         GRBLinExpr lhs = new GRBLinExpr();
         char sense = (cut instanceof ARCCut) ? GRB.GREATER_EQUAL
@@ -131,10 +133,8 @@ public class MasterProblem {
                   : (char) 0;
         if (sense == 0) throw new IllegalArgumentException("Unknown cut type");
 
-        GRBConstr constr = model.addConstr(lhs, sense, cut.getRHS(),
-                                           "cut_" + cutsConstr.size());
+        GRBConstr constr = model.addConstr(lhs, sense, cut.getRHS(), "cut_" + cutsConstr.size());
         cutsConstr.add(constr);
-
         for (int i = 0; i < realVars.size(); i++) {
             double coef = cut.getCoefficientForRoute(realVarRoutes.get(i));
             if (Math.abs(coef) > Constant.EPSILON)
@@ -144,25 +144,22 @@ public class MasterProblem {
         return constr;
     }
 
-    /** Backwards-compatible: adds a cut and discards the handle. */
-    public void addCut(ICut cut) throws GRBException {
-        addCutAndReturn(cut);
-    }
+    public void addCut(ICut cut) throws GRBException { addCutAndReturn(cut); }
 
-    /** Removes a cut constraint from the model and from cutsConstr. */
     public void removeConstraint(GRBConstr c) throws GRBException {
         model.remove(c);
         cutsConstr.remove(c);
         model.update();
     }
 
+    // ---- solve methods ----
+
     public void solve() throws GRBException {
         model.set(GRB.IntParam.Method, 1);
         model.optimize();
-
         int status = model.get(GRB.IntAttr.Status);
         if (status == GRB.Status.OPTIMAL) {
-            objectiveValue   = model.get(GRB.DoubleAttr.ObjVal);
+            objectiveValue = model.get(GRB.DoubleAttr.ObjVal);
             artificialValues = extractArtificialVariableValues();
         } else if (status == GRB.Status.INFEASIBLE) {
             throw new GRBException("Master LP infeasible", status);
@@ -170,6 +167,56 @@ public class MasterProblem {
             throw new GRBException("Master LP status " + status, status);
         }
     }
+
+    /** One-shot LP solve; returns +∞ when infeasible. Does NOT throw. */
+    public double solveReturnObjective() throws GRBException {
+        model.set(GRB.IntParam.Method, 1);
+        model.optimize();
+        int status = model.get(GRB.IntAttr.Status);
+        if (status == GRB.Status.OPTIMAL) return model.get(GRB.DoubleAttr.ObjVal);
+        return Double.POSITIVE_INFINITY;
+    }
+
+    /** Flips λ and artificials to binary, solves, caches, restores LP mode. */
+    public boolean solveAsMip() throws GRBException {
+        try {
+            setInteger(true);
+            model.set(GRB.DoubleParam.MIPGap, 1e-4);
+            model.set(GRB.IntParam.Threads,
+                      Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
+            model.set(GRB.IntParam.Method, -1);
+            model.optimize();
+
+            int status = model.get(GRB.IntAttr.Status);
+            int sols   = model.get(GRB.IntAttr.SolCount);
+
+            if (sols > 0 && (status == GRB.Status.OPTIMAL
+                          || status == GRB.Status.SUBOPTIMAL
+                          || status == GRB.Status.TIME_LIMIT
+                          || status == GRB.Status.INTERRUPTED)) {
+                objectiveValue   = model.get(GRB.DoubleAttr.ObjVal);
+                artificialValues = extractArtificialVariableValues();
+                return true;
+            }
+            return false;
+        } finally {
+            setInteger(false);      // ALWAYS restore LP mode
+        }
+    }
+
+    public boolean addAllAndSolveMip(List<List<Route>> enumeratedByD) throws GRBException {
+        if (enumeratedByD == null) return false;
+        int before = realVars.size();
+        for (List<Route> byD : enumeratedByD) {
+            if (byD == null) continue;
+            for (Route r : byD) addColumn(r, null);
+        }
+        System.out.println("    [MIP] added " + (realVars.size() - before)
+                         + " new columns, total = " + realVars.size());
+        return solveAsMip();
+    }
+
+    // ---- accessors ----
 
     public double[] extractArtificialVariableValues() throws GRBException {
         double[] v = new double[artificialVars.size()];
@@ -192,149 +239,74 @@ public class MasterProblem {
         return lambda;
     }
 
-    public double getDualVehicle() throws GRBException {
-        return truckConstr.get(GRB.DoubleAttr.Pi);
-    }
-    public double getDualDrone() throws GRBException {
-        return droneConstr.get(GRB.DoubleAttr.Pi);
+    public double getDualVehicle() throws GRBException { return truckConstr.get(GRB.DoubleAttr.Pi); }
+    public double getDualDrone()   throws GRBException { return droneConstr.get(GRB.DoubleAttr.Pi); }
+
+    public List<Route> getRealRoutes()         { return realVarRoutes; }
+    public List<Route> getRealVarRoutesList()  { return realVarRoutes; }
+    public int         getNumRealVars()        { return realVars.size(); }
+    public double      getObjectiveValue()     { return objectiveValue; }
+
+    public GRBConstr addTempRow(double[] coefs, char sense, double rhs) throws GRBException {
+        GRBLinExpr expr = new GRBLinExpr();
+        for (int i = 0; i < realVars.size(); i++)
+            if (Math.abs(coefs[i]) > Constant.EPSILON)
+                expr.addTerm(coefs[i], realVars.get(i));
+        GRBConstr c = model.addConstr(expr, sense, rhs, "temp_branch");
+        model.update();
+        return c;
     }
 
-    public List<Route> getRealRoutes() { return realVarRoutes; }
-    public double getObjectiveValue() { return objectiveValue; }
+    public void removeTempRow(GRBConstr c) throws GRBException {
+        model.remove(c);
+        model.update();
+    }
+
+    public void setInteger(boolean asInteger) throws GRBException {
+        char type = asInteger ? GRB.BINARY : GRB.CONTINUOUS;
+        for (GRBVar v : realVars)       v.set(GRB.CharAttr.VType, type);
+        for (GRBVar v : artificialVars) v.set(GRB.CharAttr.VType, type);
+    }
 
     public void dispose() throws GRBException {
         model.dispose();
         env.dispose();
     }
 
-    public void setInteger(boolean asInteger) throws GRBException {
-        char type = asInteger ? GRB.BINARY : GRB.CONTINUOUS;
-        for (GRBVar v : realVars)     v.set(GRB.CharAttr.VType, type);
-        for (GRBVar v : artificialVars) v.set(GRB.CharAttr.VType, type);
-    }
+    private int lastLpStatus = -1;
 
-    public void setMipGapTolerance(double gap) throws GRBException {
-        model.set(GRB.DoubleParam.MIPGap, gap);
-    }
-
-    public boolean hasIntegerSolution() throws GRBException {
-        int status = model.get(GRB.IntAttr.Status);
-        if (status != GRB.Status.OPTIMAL && status != GRB.Status.SUBOPTIMAL
-                && status != GRB.Status.TIME_LIMIT && status != GRB.Status.INTERRUPTED)
-            return false;
-        return model.get(GRB.IntAttr.SolCount) > 0;
-    }
-
-    public GRBConstr addTempRow(double[] coefs, char sense, double rhs) throws GRBException {
-        GRBLinExpr expr = new GRBLinExpr();
-        for (int i = 0; i < realVars.size(); i++) {
-            if (Math.abs(coefs[i]) > Constant.EPSILON)
-                expr.addTerm(coefs[i], realVars.get(i));
-        }
-        GRBConstr c = model.addConstr(expr, sense, rhs, "temp_branch");
-        model.update();
-        return c;
-    }
-
-    /** Removes a constraint created by addTempRow. */
-    public void removeTempRow(GRBConstr c) throws GRBException {
-        model.remove(c);
-        model.update();
-    }
-
-    /**
-     * Solve the current LP and return its objective.
-     * Returns Double.POSITIVE_INFINITY when infeasible.
-     */
-    public double solveReturnObjective() throws GRBException {
-        model.set(GRB.IntParam.Method, 1);   // barrier — fast for repeated LP solves
+    public boolean solveReturnFeasibility() throws GRBException {
+        model.set(GRB.IntParam.Method, 1);   // barrier
         model.optimize();
-        int status = model.get(GRB.IntAttr.Status);
-        if (status == GRB.Status.OPTIMAL)
-            return model.get(GRB.DoubleAttr.ObjVal);
-        return Double.POSITIVE_INFINITY;
-    }
+        lastLpStatus = model.get(GRB.IntAttr.Status);
 
-    /** Total number of real (route) variables currently in the master. */
-    public int getNumRealVars() { return realVars.size(); }
-
-    /** Underlying routes parallel to realVars; needed for coefficient computation. */
-    public List<Route> getRealVarRoutesList() { return realVarRoutes; }
-
-    public void addPermanentRow(double[] coefs, char sense, double rhs, String name) throws GRBException {
-        GRBLinExpr expr = new GRBLinExpr();
-        for (int i = 0; i < realVars.size(); i++) {
-            if (Math.abs(coefs[i]) > Constant.EPSILON)
-                expr.addTerm(coefs[i], realVars.get(i));
+        if (lastLpStatus == GRB.Status.OPTIMAL) {
+            objectiveValue   = model.get(GRB.DoubleAttr.ObjVal);
+            artificialValues = extractArtificialVariableValues();
+            return true;
         }
-        model.addConstr(expr, sense, rhs, name);
-        model.update();
+        return false;
     }
 
-    private final List<BranchRowHandle> branchRows = new ArrayList<>();
+public int getLastLpStatus() { return lastLpStatus; }
 
-    private static class BranchRowHandle {
-        final GRBConstr constr;
-        final BranchDecision dec;
-        BranchRowHandle(GRBConstr c, BranchDecision d) { constr = c; dec = d; }
+    /** True only when the last solve ended with Status == INFEASIBLE. */
+    public boolean hasFarkasCertificate() {
+        return lastLpStatus == GRB.Status.INFEASIBLE;
     }
 
-    /** Adds a permanent branch row. Coefficients cover every current column. */
-    public void addBranchRow(BranchDecision dec) throws GRBException {
-        GRBLinExpr expr = new GRBLinExpr();
-        for (int i = 0; i < realVars.size(); i++) {
-            double coef = dec.candidate.coefficient(realVarRoutes.get(i));
-            if (Math.abs(coef) > Constant.EPSILON)
-                expr.addTerm(coef, realVars.get(i));
-        }
-        char sense = dec.upperBound ? GRB.LESS_EQUAL : GRB.GREATER_EQUAL;
-        GRBConstr c = model.addConstr(expr, sense, dec.rhs, "branch_" + dec.candidate);
-        branchRows.add(new BranchRowHandle(c, dec));
-        model.update();
+    public double[] getFarkasDuals() throws GRBException {
+        double[] pi = new double[coverConstr.length];
+        for (int i = 0; i < coverConstr.length; i++)
+            pi[i] = coverConstr[i].get(GRB.DoubleAttr.FarkasDual);
+        return pi;
     }
 
-    /** Flips λ and artificials to binary, solves, caches results, restores LP mode. */
-    public boolean solveAsMip() throws GRBException {
-        try {
-            setInteger(true);
-            model.set(GRB.DoubleParam.MIPGap, 1e-4);
-            model.set(GRB.IntParam.Threads,
-                    Math.max(1, Runtime.getRuntime().availableProcessors() - 1));
-            model.set(GRB.IntParam.Method, -1);
-            model.optimize();
-
-            int status = model.get(GRB.IntAttr.Status);
-            int sols   = model.get(GRB.IntAttr.SolCount);
-            System.out.printf("    [MIP] status=%d sols=%d gap=%.2e obj=%.6f%n",
-                    status, sols,
-                    sols > 0 ? model.get(GRB.DoubleAttr.MIPGap) : Double.NaN,
-                    sols > 0 ? model.get(GRB.DoubleAttr.ObjVal) : Double.NaN);
-
-            if (sols > 0
-                    && (status == GRB.Status.OPTIMAL
-                    || status == GRB.Status.SUBOPTIMAL
-                    || status == GRB.Status.TIME_LIMIT
-                    || status == GRB.Status.INTERRUPTED)) {
-                objectiveValue   = model.get(GRB.DoubleAttr.ObjVal);
-                artificialValues = extractArtificialVariableValues();
-                return true;
-            }
-            return false;
-        } finally {
-            // CRITICAL: restore LP mode so the next master.solve() is a real LP.
-            setInteger(false);
-        }
+    public double getFarkasDualVehicle() throws GRBException {
+        return truckConstr.get(GRB.DoubleAttr.FarkasDual);
     }
 
-    public boolean addAllAndSolveMip(List<List<Route>> enumeratedByD) throws GRBException {
-        if (enumeratedByD == null) return false;
-        int before = realVars.size();
-        for (List<Route> byD : enumeratedByD) {
-            if (byD == null) continue;
-            for (Route r : byD) addColumn(r, null);
-        }
-        System.out.println("    [MIP] added " + (realVars.size() - before)
-                        + " new columns, total = " + realVars.size());
-        return solveAsMip();
+    public double getFarkasDualDrone() throws GRBException {
+        return droneConstr.get(GRB.DoubleAttr.FarkasDual);
     }
 }

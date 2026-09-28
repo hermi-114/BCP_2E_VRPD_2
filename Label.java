@@ -11,8 +11,7 @@ public class Label {
     BigInteger ngSet;
     BigInteger customerServed;
 
-    // ---- arc-forcing resource (only used when branching forces an arc) ----
-    public boolean requiredArcUsed = false;
+    boolean requiredArcUsed = false;
 
     Label predecessor;
     RCSPArc arc;

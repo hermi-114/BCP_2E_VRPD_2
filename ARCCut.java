@@ -6,6 +6,7 @@ public class ARCCut implements ICut {
     public final int rhs;
     public final int k;
     public double dual = 0;
+    public double violation = 0;
 
     public ARCCut(Set<Integer> C) {
         this.subsetC = new HashSet<>(C);
@@ -20,10 +21,12 @@ public class ARCCut implements ICut {
                                   - Constant.EPSILON);
     }
 
-    @Override public void setDual(double newDual) { this.dual = newDual; }
+    @Override public void setDual(double newDual)  { this.dual = newDual; }
     @Override public double getDual()              { return this.dual; }
     @Override public double getRHS()               { return this.rhs; }
     @Override public Set<Integer> getSubsetC()     { return this.subsetC; }
+    @Override public double getViolation()         { return this.violation; }
+    @Override public void   setViolation(double v) { this.violation = v; }
 
     @Override
     public double getCoefficientForRoute(Route route) {
@@ -45,20 +48,17 @@ public class ARCCut implements ICut {
 
     @Override
     public double getReducedCostPenaltyForTruckArc(int src, int dst, int numDrones) {
-        if (!subsetC.contains(src) && subsetC.contains(dst)) {
+        if (!subsetC.contains(src) && subsetC.contains(dst))
             return -dual * (k - numDrones);
-        }
         return 0.0;
     }
 
     @Override
     public double getReducedCostPenaltyForDroneArc(int park, DroneSchedule schedule,
                                                    int numDrones) {
-        for (int cust : schedule.customerServed) {
-            if (subsetC.contains(cust)) {
+        for (int cust : schedule.customerServed)
+            if (subsetC.contains(cust))
                 return -dual * (k - numDrones);
-            }
-        }
         return 0.0;
     }
 }

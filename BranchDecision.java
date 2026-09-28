@@ -1,6 +1,6 @@
 public class BranchDecision {
     public final BranchCandidate candidate;
-    public final boolean upperBound;   // true → ≤, false → ≥
+    public final boolean upperBound;
     public final double  rhs;
 
     public BranchDecision(BranchCandidate candidate, boolean upperBound, double rhs) {
